@@ -39,9 +39,9 @@ def _piccolo_to_mbar(mean_val: float, units: str, rng_mbar: float) -> float:
         return float(mean_val) / 100.0
     raise ValueError(f"Unsupported piccolo_units: {units}")
 
-def compute_results(csv_path: Path | str, cfg: ResultsConfig) -> dict:
-    """Compute legacy-style results fields from a raw logger CSV."""
-    df = pd.read_csv(csv_path)
+def compute_results(csv_or_df: Path | str | pd.DataFrame, cfg: ResultsConfig) -> dict:
+    """Compute legacy-style results fields from a raw logger CSV or DataFrame."""
+    df = pd.read_csv(csv_or_df) if isinstance(csv_or_df, (str, Path)) else pd.DataFrame(csv_or_df)
     A = _resolve_area(cfg)
 
     # Temperature (°C) and Kelvin for density calc
