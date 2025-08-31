@@ -1,8 +1,45 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
+import math
 import pandas as pd
 import numpy as np
+
+
+@dataclass
+class Geometry:
+    duct_height_m: float = 1.0
+    duct_width_m: float = 2.3
+    upstream_area_m2: float | None = None  # if None -> use plane area
+    throat_diameter_m: float | None = None
+    throat_area_m2: float | None = None
+    rho_default_kg_m3: float = 0.7
+
+
+def plane_area(g: Geometry) -> float:
+    return g.duct_height_m * g.duct_width_m
+
+
+def effective_upstream_area(g: Geometry) -> float:
+    return g.upstream_area_m2 if g.upstream_area_m2 is not None else plane_area(g)
+
+
+def throat_area(g: Geometry) -> float:
+    if g.throat_area_m2 is not None:
+        return g.throat_area_m2
+    if g.throat_diameter_m is not None:
+        return math.pi * (g.throat_diameter_m ** 2) / 4
+    raise ValueError("Provide throat diameter or area")
+
+
+def r_ratio(g: Geometry) -> float:
+    return plane_area(g) / throat_area(g)
+
+
+def beta_from_geometry(g: Geometry) -> float:
+    A1 = effective_upstream_area(g)
+    At = throat_area(g)
+    return math.sqrt(At / A1)
 
 @dataclass
 class DiffuserGeometry:
