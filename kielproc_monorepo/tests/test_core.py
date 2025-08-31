@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 
-from kielproc.geometry import DiffuserGeometry, infer_geometry_from_table
+from kielproc.geometry import (
+    DiffuserGeometry,
+    infer_geometry_from_table,
+    planes_to_z,
+    plane_value_to_z,
+)
 
 
 def test_radius_at_linear_cone():
@@ -26,4 +31,14 @@ def test_infer_geometry_converts_mm_to_m():
     assert np.isclose(geo.L, 1.0)
     assert np.isclose(geo.dt, 0.06)
     assert np.isclose(geo.r_As_At, 1.5)
+
+
+def test_planes_to_z_maps_indices_to_length():
+    geo = DiffuserGeometry(D1=0.1, D2=0.2, L=1.2)
+    planes = np.array([0, 1, 2, 3])
+    z = planes_to_z(planes, geo)
+    assert np.allclose(z, np.linspace(0, 1.2, 4))
+    # single plane value interpolation
+    z_val = plane_value_to_z(2, planes, geo)
+    assert np.isclose(z_val, 0.8)
 

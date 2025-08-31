@@ -46,3 +46,39 @@ def infer_geometry_from_table(df: pd.DataFrame) -> DiffuserGeometry | None:
         geo.dt = to_m(dt) if dt is not None else None
         return geo
     return None
+
+
+def planes_to_z(planes: np.ndarray, geom: DiffuserGeometry | None) -> np.ndarray:
+    """Map plane identifiers to axial positions anchored to geometry.
+
+    Parameters
+    ----------
+    planes:
+        Array of plane identifiers. These may already be axial positions in
+        meters or simply sequential indices (e.g., 0,1,2,...).
+    geom:
+        Optional :class:`DiffuserGeometry` providing the total length ``L`` for
+        scaling. If ``geom`` is ``None`` or the identifiers appear to already be
+        in meters, the input is returned unchanged.
+
+    Returns
+    -------
+    numpy.ndarray
+        Axial positions in meters spanning ``[0, geom.L]`` when indices are
+        provided, otherwise the original values.
+    """
+    z = np.asarray(planes, dtype=float)
+    if geom is None or z.size == 0:
+        return z
+    # Heuristic: if planes are evenly spaced integers, treat them as indices
+    diffs = np.diff(z)
+    if z.size > 1 and np.allclose(diffs, 1.0) and np.allclose(z, np.round(z)):
+        return np.linspace(0.0, geom.L, len(z))
+    return z
+
+
+def plane_value_to_z(pv: float, planes: np.ndarray, geom: DiffuserGeometry | None) -> float:
+    """Convert a single plane identifier to axial ``z`` position (meters)."""
+    z_vals = planes_to_z(planes, geom)
+    planes = np.asarray(planes, dtype=float)
+    return float(np.interp(float(pv), planes, z_vals))
