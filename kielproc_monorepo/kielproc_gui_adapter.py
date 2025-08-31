@@ -23,6 +23,11 @@ from kielproc.geometry import (
 from kielproc.legacy_results import ResultsConfig, compute_results as compute_legacy_results
 
 
+def _df_from(csv_or_df: Union[Path, pd.DataFrame]) -> pd.DataFrame:
+    """Return a DataFrame from a path or existing DataFrame."""
+    return pd.read_csv(csv_or_df) if isinstance(csv_or_df, (str, Path)) else pd.DataFrame(csv_or_df)
+
+
 def parse_legacy_workbook_array(
     xlsx_path: Path, piccolo_flat_threshold: float = 1e-6
 ):
@@ -42,7 +47,7 @@ def map_verification_plane(csv_or_df: Union[Path, pd.DataFrame], qs_col: str,
 
     Geometry information is also persisted as columns in the output CSV.
     """
-    df = pd.read_csv(csv_or_df) if isinstance(csv_or_df, (str, Path)) else pd.DataFrame(csv_or_df)
+    df = _df_from(csv_or_df)
     r = r_ratio(geom)
     beta = beta_from_geometry(geom)
     qt = map_qs_to_qt(df[qs_col].to_numpy(float), r=r, rho_t_over_rho_s=1.0)
@@ -75,7 +80,7 @@ def map_verification_plane(csv_or_df: Union[Path, pd.DataFrame], qs_col: str,
     return out_path
 
 def fit_alpha_beta(
-    block_specs: Dict[str, Path],
+    block_specs: Dict[str, Union[Path, pd.DataFrame]],
     ref_col: str,
     piccolo_col: str,
     lambda_ratio: float,
@@ -90,7 +95,7 @@ def fit_alpha_beta(
     qa_gate_opp: float | None = DEFAULT_DELTA_OPP_MAX,
     qa_gate_w: float | None = DEFAULT_W_MAX,
 ) -> Dict[str, object]:
-    blocks = {name: pd.read_csv(path) for name, path in block_specs.items()}
+    blocks = {name: _df_from(path) for name, path in block_specs.items()}
     per_block, pooled = compute_translation_table(
         blocks,
         ref_key=ref_col,
@@ -152,20 +157,21 @@ def fit_alpha_beta(
         "blocks_info": per_block.to_dict(orient="records"),
     }
 
-def translate_piccolo(csv_path: Path, alpha: float, beta: float, piccolo_col: str, out_col: str, out_path: Path) -> Path:
-    import pandas as pd
-    df = pd.read_csv(csv_path)
+def translate_piccolo(csv_or_df: Union[Path, pd.DataFrame], alpha: float, beta: float,
+                      piccolo_col: str, out_col: str, out_path: Path) -> Path:
+    df = _df_from(csv_or_df)
     out = apply_translation(df, alpha, beta, src_col=piccolo_col, out_col=out_col)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(out_path, index=False)
     return out_path
 
 
-def legacy_results_from_csv(csv_path: Path, cfg: ResultsConfig, out_path: Path) -> dict:
+def legacy_results_from_csv(csv_or_df: Union[Path, pd.DataFrame], cfg: ResultsConfig, out_path: Path) -> dict:
     """Compute legacy-style summary fields and persist them to CSV.
 
+    ``csv_or_df`` may be a path to a CSV file or an in-memory DataFrame.
     Returns the computed dictionary for convenience."""
-    res = compute_legacy_results(csv_path, cfg)
+    res = compute_legacy_results(csv_or_df, cfg)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame([res]).to_csv(out_path, index=False)
     return res
@@ -174,9 +180,10 @@ def legacy_results_from_csv(csv_path: Path, cfg: ResultsConfig, out_path: Path) 
 from kielproc.geometry import DiffuserGeometry, infer_geometry_from_table, planes_to_z, plane_value_to_z
 from kielproc.report import plot_flow_map_unwrapped, compute_circumferential_static_deviation
 
-def generate_flow_map_from_csv(data_csv: Path, theta_col: str, plane_col: str, ps_col: str,
-                               outdir: Path, geom_csv: Path|None=None, agg: str="median",
-                               normalize_by_col: str|None=None) -> dict:
+def generate_flow_map_from_csv(data_csv_or_df: Union[Path, pd.DataFrame], theta_col: str,
+                               plane_col: str, ps_col: str, outdir: Path,
+                               geom_csv: Path | None = None, agg: str = "median",
+                               normalize_by_col: str | None = None) -> dict:
     """
     Build an unwrapped flow map (θ vs z) scaled to diffuser length if available.
     - data_csv: long-form table with columns including theta_col, plane_col (z or plane index), ps_col (Pa)
@@ -184,7 +191,7 @@ def generate_flow_map_from_csv(data_csv: Path, theta_col: str, plane_col: str, p
     - normalize_by_col: optional column in data_csv used to normalize Δps (e.g., qt or dp_vent)
     """
     import pandas as pd, numpy as np
-    df = pd.read_csv(data_csv)
+    df = _df_from(data_csv_or_df)
     geom = None
     if geom_csv is not None and Path(geom_csv).exists():
         g = pd.read_csv(geom_csv)
@@ -201,15 +208,15 @@ def generate_flow_map_from_csv(data_csv: Path, theta_col: str, plane_col: str, p
     return {"flowmap_png": png, "geom_used": bool(geom)}
 
 
-def map_from_tot_and_static(csv_path: Path, total_col: str, static_col: str,
-                            geom: Geometry, sampling_hz: float | None,
+def map_from_tot_and_static(csv_or_df: Union[Path, pd.DataFrame], total_col: str,
+                            static_col: str, geom: Geometry, sampling_hz: float | None,
                             out_path: Path) -> Path:
     """
     Convenience: compute qs = p_t_kiel - p_s_avg mechanically averaged line,
     then map to qt and dp_vent using Geometry.
     """
     import pandas as pd, numpy as np
-    df = pd.read_csv(csv_path)
+    df = _df_from(csv_or_df)
     if total_col not in df.columns or static_col not in df.columns:
         raise ValueError(f"Missing required columns: {total_col}, {static_col}")
     df = df.copy()
@@ -220,9 +227,11 @@ def map_from_tot_and_static(csv_path: Path, total_col: str, static_col: str,
 from kielproc.report import plot_polar_slice_wall
 from kielproc.geometry import DiffuserGeometry
 
-def generate_polar_slice_from_csv(data_csv: Path, theta_col: str, plane_col: str, ps_col: str,
-                                  plane_value: float, outdir: Path, geom_csv: Path|None=None,
-                                  normalize_by_col: str|None=None, band: tuple=(0.9,1.0)) -> dict:
+def generate_polar_slice_from_csv(data_csv_or_df: Union[Path, pd.DataFrame], theta_col: str,
+                                  plane_col: str, ps_col: str, plane_value: float,
+                                  outdir: Path, geom_csv: Path | None = None,
+                                  normalize_by_col: str | None = None,
+                                  band: tuple = (0.9, 1.0)) -> dict:
     """
     Build a polar wall-static slice at a given plane (z or plane index).
     - plane_value: value to select in plane_col (exact match after float casting)
@@ -230,7 +239,7 @@ def generate_polar_slice_from_csv(data_csv: Path, theta_col: str, plane_col: str
     - If normalize_by_col is set, divide by its plane median to get dimensionless map.
     """
     import pandas as pd, numpy as np
-    df = pd.read_csv(data_csv)
+    df = _df_from(data_csv_or_df)
     # plane selection (tolerant exact float equality by string cast and float)
     pv = float(plane_value)
     # try numeric compare first
