@@ -8,9 +8,10 @@ from pathlib import Path
 def write_summary_tables(outdir: Path, per_block: pd.DataFrame, pooled: dict | None):
     outdir.mkdir(parents=True, exist_ok=True)
     per_block.to_csv(outdir / "alpha_beta_by_block.csv", index=False)
-    files = [str(outdir / "alpha_beta_by_block.csv")]
+    import json
+    (outdir / "alpha_beta_by_block.json").write_text(json.dumps(per_block.to_dict(orient="records"), indent=2))
+    files = [str(outdir / "alpha_beta_by_block.csv"), str(outdir / "alpha_beta_by_block.json")]
     if pooled:
-        import json
         pd.DataFrame([pooled]).to_csv(outdir / "alpha_beta_pooled.csv", index=False)
         files.append(str(outdir / "alpha_beta_pooled.csv"))
         (outdir / "alpha_beta_pooled.json").write_text(json.dumps(pooled, indent=2))

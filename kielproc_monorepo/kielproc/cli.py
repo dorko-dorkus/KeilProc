@@ -28,6 +28,15 @@ def build_parser():
     i2.add_argument("--piccolo-col", default="piccolo")
     i2.add_argument("--lambda-ratio", type=float, default=1.0)
     i2.add_argument("--max-lag", type=int, default=300)
+    i2.add_argument("--pN-col", default="pN")
+    i2.add_argument("--pS-col", default="pS")
+    i2.add_argument("--pE-col", default="pE")
+    i2.add_argument("--pW-col", default="pW")
+    i2.add_argument("--q-mean-col", default="q_mean")
+    i2.add_argument("--qa-gate-opp", type=float, default=None,
+                    help="Max allowed Δ_opp; gate if exceeded")
+    i2.add_argument("--qa-gate-w", type=float, default=None,
+                    help="Max allowed W index; gate if exceeded")
     i2.add_argument("--outdir", required=True)
 
     i3 = sub.add_parser("translate", help="Apply alpha/beta to legacy piccolo to overlay on mapped reference")
@@ -61,6 +70,32 @@ def main(argv=None):
             blocks[name] = pd.read_csv(p)
         per_block, pooled = compute_translation_table(blocks, ref_key=a.ref_col, picc_key=a.piccolo_col,
                                                       lambda_ratio=a.lambda_ratio, max_lag=a.max_lag)
+        # Compute QA indices for each block
+        from .qa import qa_indices
+        qa_rows = []
+        for name, df in blocks.items():
+            pN = df[a.pN_col].mean()
+            pS = df[a.pS_col].mean()
+            pE = df[a.pE_col].mean()
+            pW = df[a.pW_col].mean()
+            q = df[a.q_mean_col].mean()
+            d_opp, W = qa_indices(pN, pS, pE, pW, q)
+            ok = True
+            if a.qa_gate_opp is not None and d_opp > a.qa_gate_opp:
+                ok = False
+            if a.qa_gate_w is not None and W > a.qa_gate_w:
+                ok = False
+            qa_rows.append(dict(block=name, delta_opp=d_opp, W=W, qa_pass=ok))
+        qa_df = pd.DataFrame(qa_rows)
+
+        if not qa_df["qa_pass"].all():
+            outdir = Path(a.outdir); outdir.mkdir(parents=True, exist_ok=True)
+            files = write_summary_tables(outdir, qa_df, None)
+            print("\n".join(str(f) for f in files))
+            raise SystemExit("Ring QA failed; aborting fit")
+
+        # Merge QA with translation results
+        per_block = per_block.merge(qa_df, on="block", how="left")
         outdir = Path(a.outdir); outdir.mkdir(parents=True, exist_ok=True)
         files = write_summary_tables(outdir, per_block, pooled)
         if blocks and not per_block.empty:
