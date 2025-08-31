@@ -9,10 +9,12 @@ Integrated GUI for Kiel + Wall-Static Baseline & Legacy Translation
 
 import sys
 import traceback
+import json
 from pathlib import Path
 import math
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import pandas as pd
 
 # Ensure repo root is importable when running as "python gui/app_gui.py"
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +28,7 @@ from kielproc_gui_adapter import (
     generate_flow_map_from_csv, generate_polar_slice_from_csv,
     legacy_results_from_csv, ResultsConfig
 )
+from kielproc.legacy_results import compute_results as compute_results_cli
 from kielproc.qa import DEFAULT_W_MAX, DEFAULT_DELTA_OPP_MAX
 from kielproc.geometry import (
     Geometry,
@@ -52,6 +55,8 @@ class App(tk.Tk):
         self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True)
         self.tab_phys = ttk.Frame(self.nb); self.nb.add(self.tab_phys, text="Physics / Translation")
         self._build_phys(self.tab_phys)
+        self.tab_results = ttk.Frame(self.nb); self.nb.add(self.tab_results, text="Results")
+        self._build_results(self.tab_results)
 
     def _build_phys(self, frm):
         pad = {"padx": 6, "pady": 4}
@@ -256,8 +261,43 @@ class App(tk.Tk):
         self.txt.grid(row=row, column=0, columnspan=4, sticky="nsew", **pad)
         frm.grid_rowconfigure(row, weight=1); frm.grid_columnconfigure(1, weight=1)
 
+    def _build_results(self, frm):
+        pad = {"padx": 6, "pady": 4}
+        row = 0
+        ttk.Label(frm, text="Compute legacy-style results from a logger CSV").grid(row=row, column=0, columnspan=3, sticky="w", **pad); row+=1
+
+        self.var_res_csv_in = tk.StringVar()
+        ttk.Label(frm, text="Logger CSV").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_res_csv_in, width=56).grid(row=row, column=1, **pad)
+        ttk.Button(frm, text="Browse", command=lambda: self._pick(self.var_res_csv_in, [("CSV","*.csv")])).grid(row=row, column=2, **pad); row+=1
+
+        self.var_res_cfg_json = tk.StringVar()
+        ttk.Label(frm, text="Config JSON (opt)").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_res_cfg_json, width=56).grid(row=row, column=1, **pad)
+        ttk.Button(frm, text="Browse", command=lambda: self._pick(self.var_res_cfg_json, [("JSON","*.json")])).grid(row=row, column=2, **pad); row+=1
+
+        self.var_res_json_out = tk.StringVar()
+        ttk.Label(frm, text="JSON out (opt)").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_res_json_out, width=56).grid(row=row, column=1, **pad)
+        ttk.Button(frm, text="Browse", command=lambda: self._save_as(self.var_res_json_out, [("JSON","*.json")])).grid(row=row, column=2, **pad); row+=1
+
+        self.var_res_csv_out = tk.StringVar()
+        ttk.Label(frm, text="CSV out (opt)").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_res_csv_out, width=56).grid(row=row, column=1, **pad)
+        ttk.Button(frm, text="Browse", command=lambda: self._save_as(self.var_res_csv_out, [("CSV","*.csv")])).grid(row=row, column=2, **pad); row+=1
+
+        ttk.Button(frm, text="Compute Results", command=self._compute_results).grid(row=row, column=1, sticky="w", **pad); row+=1
+
+        self.txt_results = tk.Text(frm, height=20)
+        self.txt_results.grid(row=row, column=0, columnspan=3, sticky="nsew", **pad)
+        frm.grid_rowconfigure(row, weight=1); frm.grid_columnconfigure(1, weight=1)
+
     def _pick(self, var, patterns):
         p = filedialog.askopenfilename(title="Choose file", filetypes=patterns)
+        if p: var.set(p)
+
+    def _save_as(self, var, patterns):
+        p = filedialog.asksaveasfilename(title="Choose destination", defaultextension=patterns[0][1], filetypes=patterns)
         if p: var.set(p)
 
     def log(self, msg):
@@ -438,6 +478,30 @@ class App(tk.Tk):
             self.log("[OK] Results: " + "; ".join(f"{k}={v}" for k,v in res.items()))
         except Exception as e:
             self.log(f"[ERROR] results: {e}\n{traceback.format_exc()}")
+
+    def _compute_results(self):
+        try:
+            cfg_dict = {}
+            if self.var_res_cfg_json.get():
+                with open(self.var_res_cfg_json.get()) as fh:
+                    cfg_dict = json.load(fh)
+            cfg = ResultsConfig(**cfg_dict)
+            res = compute_results_cli(self.var_res_csv_in.get(), cfg)
+            self.txt_results.delete("1.0", "end")
+            for k, v in res.items():
+                self.txt_results.insert("end", f"{k}: {v}\n")
+            if self.var_res_json_out.get():
+                p = Path(self.var_res_json_out.get())
+                p.parent.mkdir(parents=True, exist_ok=True)
+                with open(p, "w") as fh:
+                    json.dump(res, fh, indent=2)
+            if self.var_res_csv_out.get():
+                p = Path(self.var_res_csv_out.get())
+                p.parent.mkdir(parents=True, exist_ok=True)
+                pd.DataFrame([res]).to_csv(p, index=False)
+            self.log("[OK] Results computed")
+        except Exception as e:
+            self.log(f"[ERROR] compute results: {e}\n{traceback.format_exc()}")
 
     def _do_flowmap(self):
         try:
