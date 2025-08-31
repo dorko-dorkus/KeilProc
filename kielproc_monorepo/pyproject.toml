@@ -16,6 +16,9 @@ dependencies = [
     "openpyxl>=3.1",
 ]
 
+[project.scripts]
+kielproc = "kielproc.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["kielproc*"]
