@@ -2,7 +2,7 @@
 from __future__ import annotations
 import numpy as np
 import pandas as pd
-from .lag import estimate_lag_xcorr, advance_series
+from .lag import estimate_lag_xcorr, shift_series
 from .deming import deming_fit
 from .pooling import pool_alpha_beta_random_effects
 
@@ -16,8 +16,9 @@ def compute_translation_table(blocks: dict, ref_key="mapped_ref", picc_key="picc
             # skip flat/missing piccolo
             continue
         lag, _, _ = estimate_lag_xcorr(x, y, max_lag=max_lag)
-        # Positive lag -> y lags x; advance piccolo to align
-        y_shift = advance_series(y, lag)
+        # Positive ``lag`` means piccolo lags the reference.  Align by shifting
+        # piccolo forward (left) with ``shift_series(y, -lag)``.
+        y_shift = shift_series(y, -lag)
         m, b, sa, sb = deming_fit(x, y_shift, lambda_ratio=lambda_ratio)
         rows.append(dict(block=name, alpha=m, beta=b, alpha_se=sa, beta_se=sb, lag_samples=int(lag)))
     tidy = pd.DataFrame(rows).set_index("block") if rows else pd.DataFrame(columns=["alpha","beta","alpha_se","beta_se","lag_samples"])

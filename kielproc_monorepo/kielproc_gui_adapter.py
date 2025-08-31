@@ -9,7 +9,7 @@ import numpy as np
 from typing import List, Dict, Tuple
 from kielproc.physics import map_qs_to_qt, venturi_dp_from_qt
 from kielproc.translate import compute_translation_table, apply_translation
-from kielproc.lag import estimate_lag_xcorr, advance_series, first_order_lag
+from kielproc.lag import shift_series, first_order_lag
 from kielproc.report import write_summary_tables, plot_alignment
 
 def map_verification_plane(csv_path: Path, qs_col: str, r: float, beta: float, sampling_hz: float|None, out_path: Path) -> Path:
@@ -35,7 +35,9 @@ def fit_alpha_beta(block_specs: Dict[str, Path], ref_col: str, piccolo_col: str,
         name0 = list(blocks.keys())[0]
         d0 = blocks[name0]
         lag0 = int(per_block.loc[per_block["block"]==name0, "lag_samples"].iloc[0])
-        picc_shift = advance_series(d0[piccolo_col].to_numpy(float), lag0)
+        # Positive lag -> piccolo lags the reference.  Shift piccolo forward
+        # (left) by ``lag0`` samples for overlay.
+        picc_shift = shift_series(d0[piccolo_col].to_numpy(float), -lag0)
         t = d0["Time_s"] if "Time_s" in d0 else np.arange(len(d0))
         png = plot_alignment(outdir, t, d0[ref_col], d0[piccolo_col], picc_shift, title=f"Alignment {name0}", stem=f"align_{name0}")
         files.append(png)

@@ -76,8 +76,24 @@ def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold
                 df = xl.parse(sheet, header=header_row)
                 df.columns = newcols[:len(df.columns)]
                 if "Time" in df.columns:
-                    mask = df["Time"].astype(str).str.strip().str.lower()
-                    df = df[~mask.isin(["nan","time","averages"])].copy()
+                    mask = df["Time"].astype(str).map(_clean_name)
+                    # Drop rows where the time column is empty, a header repeat, or an
+                    # averages row.  ``_clean_name`` normalizes case/whitespace so we
+                    # can simply test prefixes for robustness (e.g. "Averages:").
+                    drop_time = mask.isin(['', 'nan']) | mask.str.contains(r"^(?:time|averages?)", na=False)
+                    df = df[~drop_time].copy()
+
+                # Remove any rows that are entirely header labels or contain the word
+                # "averages" in any column.  This handles cases where a header row
+                # leaks into the body of the sheet.
+                clean_rows = df.applymap(_clean_name)
+                hdr_clean = [_clean_name(c) for c in df.columns]
+                bad = clean_rows.apply(
+                    lambda r: r.eq('averages').any() or
+                               all((v == '' or v == h) for v, h in zip(r, hdr_clean)),
+                    axis=1,
+                )
+                df = df[~bad].copy()
 
                 out = pd.DataFrame(index=df.index)
 
@@ -100,8 +116,12 @@ def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold
                 if m_temp: out["Temperature"] = df[m_temp]
                 if m_picc: out["Piccolo"] = df[m_picc]
 
-                key_cols = [c for c in ["Static","VP","Temperature","Piccolo"] if c in out.columns]
+                key_cols = [c for c in ["Static", "VP", "Temperature", "Piccolo"] if c in out.columns]
                 if key_cols:
+                    # Coerce to numeric so that any leaked headers or text such as
+                    # "Averages" become NaN prior to the emptiness check.
+                    for c in key_cols:
+                        out[c] = pd.to_numeric(out[c], errors="coerce")
                     mask_all_nan = out[key_cols].isna().all(axis=1)
                     out = out[~mask_all_nan]
                 out = out.copy()
@@ -111,7 +131,7 @@ def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold
                 m = re.search(r"(\.\d+)$", sheet); out["Replicate"] = m.group(1) if m else ""
 
                 if "Piccolo" in out.columns:
-                    v = pd.to_numeric(out["Piccolo"], errors="coerce")
+                    v = out["Piccolo"].to_numpy(float)
                     piccolo_flat = bool(np.nanstd(v) < piccolo_flat_threshold)
 
                 missing = _missing_required(out)
@@ -157,7 +177,7 @@ def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold
                         vals = raw.iloc[r, a:b]
                         if pd.isna(vals).all():
                             continue
-                        if any(str(v).strip().lower() == 'averages' for v in vals.values):
+                        if any(_clean_name(v).startswith('average') for v in vals.values):
                             continue
                         rec = {"Sample": r - data_start + 1, "Workbook": xlsx_path.name, "Sheet": sheet, "Replicate": ""}
                         rec["Port"] = port_val
@@ -174,15 +194,21 @@ def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold
                                 rec["Temperature"] = v
                             elif "piccolo" in name:
                                 rec["Piccolo"] = v
-                        tval = str(rec.get('Time','')).strip().lower()
-                        if tval in ('', 'nan', 'time', 'averages'):
+                        tval = _clean_name(rec.get('Time', ''))
+                        if tval in ('', 'nan') or tval.startswith('time') or tval.startswith('average'):
                             continue
                         rows_acc.append(rec)
 
                 if rows_acc:
                     out = pd.DataFrame(rows_acc)
+                    key_cols = [c for c in ["Static", "VP", "Temperature", "Piccolo"] if c in out.columns]
+                    if key_cols:
+                        for c in key_cols:
+                            out[c] = pd.to_numeric(out[c], errors="coerce")
+                        mask_all_nan = out[key_cols].isna().all(axis=1)
+                        out = out[~mask_all_nan]
                     if "Piccolo" in out.columns:
-                        v = pd.to_numeric(out["Piccolo"], errors="coerce")
+                        v = out["Piccolo"].to_numpy(float)
                         piccolo_flat = bool(np.nanstd(v) < piccolo_flat_threshold)
 
                     missing = _missing_required(out)
