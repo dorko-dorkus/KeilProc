@@ -6,6 +6,12 @@ import numpy as np
 import re, json, math
 from typing import Optional, List
 
+# Columns expected in every parsed sheet.  These are used to validate
+# that the parser was able to populate all required fields when reading a
+# legacy workbook.  The list can be extended in the future as additional
+# fields become mandatory.
+REQUIRED_COLUMNS = ["Time", "Static", "VP", "Temperature", "Piccolo"]
+
 @dataclass
 class SheetParseResult:
     sheet: str
@@ -20,11 +26,21 @@ class SheetParseResult:
 def _clean_name(x):
     return str(x).strip().lower() if pd.notna(x) else ""
 
+
+def _missing_required(df: pd.DataFrame) -> List[str]:
+    """Return a list of required column names that are absent in ``df``."""
+    return [c for c in REQUIRED_COLUMNS if c not in df.columns]
+
 def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold: float=1e-6) -> dict:
     """Parse legacy 2007/2011/2018 workbooks into standardized CSVs."""
     xlsx_path = Path(xlsx_path)
     out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
-    xl = pd.ExcelFile(xlsx_path)
+    try:
+        xl = pd.ExcelFile(xlsx_path)
+    except ImportError as exc:  # pragma: no cover - depends on optional deps
+        raise ImportError(
+            "Unable to open workbook. For .xls files install the 'xlrd' package"
+        ) from exc
     results: List[SheetParseResult] = []
 
     for sheet in xl.sheet_names:
@@ -98,11 +114,24 @@ def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold
                     v = pd.to_numeric(out["Piccolo"], errors="coerce")
                     piccolo_flat = bool(np.nanstd(v) < piccolo_flat_threshold)
 
+                missing = _missing_required(out)
+                if missing:
+                    notes = f"missing required columns: {', '.join(missing)}"
+
                 csv_path = out_dir / f"{xlsx_path.stem}__{re.sub(r'[^A-Za-z0-9_.-]+','_', sheet)}.csv"
                 out.to_csv(csv_path, index=False)
-                results.append(SheetParseResult(sheet=sheet, replicate=(m.group(1) if m else None),
-                                                csv_path=str(csv_path), n_rows=int(len(out)), n_cols=int(out.shape[1]),
-                                                piccolo_flat=piccolo_flat, mode="vertical", notes=notes))
+                results.append(
+                    SheetParseResult(
+                        sheet=sheet,
+                        replicate=(m.group(1) if m else None),
+                        csv_path=str(csv_path),
+                        n_rows=int(len(out)),
+                        n_cols=int(out.shape[1]),
+                        piccolo_flat=piccolo_flat,
+                        mode="vertical",
+                        notes=notes,
+                    )
+                )
                 continue
 
             else:
@@ -155,11 +184,26 @@ def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold
                     if "Piccolo" in out.columns:
                         v = pd.to_numeric(out["Piccolo"], errors="coerce")
                         piccolo_flat = bool(np.nanstd(v) < piccolo_flat_threshold)
+
+                    missing = _missing_required(out)
+                    note = ""
+                    if missing:
+                        note = f"missing required columns: {', '.join(missing)}"
+
                     csv_path = out_dir / f"{xlsx_path.stem}__{re.sub(r'[^A-Za-z0-9_.-]+','_', sheet)}.csv"
                     out.to_csv(csv_path, index=False)
-                    results.append(SheetParseResult(sheet=sheet, replicate=None, csv_path=str(csv_path),
-                                                    n_rows=int(len(out)), n_cols=int(out.shape[1]),
-                                                    piccolo_flat=piccolo_flat, mode="multiport", notes=""))
+                    results.append(
+                        SheetParseResult(
+                            sheet=sheet,
+                            replicate=None,
+                            csv_path=str(csv_path),
+                            n_rows=int(len(out)),
+                            n_cols=int(out.shape[1]),
+                            piccolo_flat=piccolo_flat,
+                            mode="multiport",
+                            notes=note,
+                        )
+                    )
                     continue
 
         # Fallback: minimal CSV

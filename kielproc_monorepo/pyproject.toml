@@ -19,3 +19,6 @@ dependencies = [
 where = ["."]
 include = ["kielproc*"]
 exclude = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
