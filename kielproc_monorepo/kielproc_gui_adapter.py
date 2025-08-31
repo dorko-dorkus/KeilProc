@@ -6,22 +6,57 @@ Provides simple functions with file-path I/O to avoid heavy refactors.
 from pathlib import Path
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Union
 from kielproc.physics import map_qs_to_qt, venturi_dp_from_qt
 from kielproc.translate import compute_translation_table, apply_translation
 from kielproc.lag import shift_series, first_order_lag
 from kielproc.report import write_summary_tables, plot_alignment
 from kielproc.qa import qa_indices, DEFAULT_DELTA_OPP_MAX, DEFAULT_W_MAX
+from kielproc.geometry import (
+    Geometry,
+    plane_area,
+    throat_area,
+    effective_upstream_area,
+    r_ratio,
+    beta_from_geometry,
+)
 
-def map_verification_plane(csv_path: Path, qs_col: str, r: float, beta: float, sampling_hz: float|None, out_path: Path) -> Path:
-    df = pd.read_csv(csv_path)
+
+def map_verification_plane(csv_or_df: Union[Path, pd.DataFrame], qs_col: str,
+                           geom: Geometry, sampling_hz: float | None,
+                           out_path: Path) -> Path:
+    """Map qs at verification plane to qt and venturi Δp using Geometry.
+
+    Geometry information is also persisted as columns in the output CSV.
+    """
+    df = pd.read_csv(csv_or_df) if isinstance(csv_or_df, (str, Path)) else pd.DataFrame(csv_or_df)
+    r = r_ratio(geom)
+    beta = beta_from_geometry(geom)
     qt = map_qs_to_qt(df[qs_col].to_numpy(float), r=r, rho_t_over_rho_s=1.0)
     dpv = venturi_dp_from_qt(qt, beta=beta)
     out = df.copy()
     out["qt"] = qt
     out["dp_vent"] = dpv
     if sampling_hz and sampling_hz > 0:
-        n = len(out); out["Sample"] = np.arange(n); out["Time_s"] = out["Sample"]/float(sampling_hz)
+        n = len(out)
+        out["Sample"] = np.arange(n)
+        out["Time_s"] = out["Sample"] / float(sampling_hz)
+
+    # Persist geometry fields
+    As = plane_area(geom)
+    At = throat_area(geom)
+    A1 = effective_upstream_area(geom)
+    out["duct_height_m"] = geom.duct_height_m
+    out["duct_width_m"] = geom.duct_width_m
+    out["As_m2"] = As
+    out["upstream_area_m2"] = geom.upstream_area_m2
+    out["A1_m2"] = A1
+    out["At_m2"] = At
+    out["r"] = r
+    out["beta"] = beta
+    out["rho_default_kg_m3"] = geom.rho_default_kg_m3
+    out["A1_auto_from_As"] = geom.upstream_area_m2 is None
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(out_path, index=False)
     return out_path
@@ -144,10 +179,11 @@ def generate_flow_map_from_csv(data_csv: Path, theta_col: str, plane_col: str, p
 
 
 def map_from_tot_and_static(csv_path: Path, total_col: str, static_col: str,
-                            r: float, beta: float, sampling_hz: float|None, out_path: Path) -> Path:
+                            geom: Geometry, sampling_hz: float | None,
+                            out_path: Path) -> Path:
     """
     Convenience: compute qs = p_t_kiel - p_s_avg mechanically averaged line,
-    then map to qt and dp_vent.
+    then map to qt and dp_vent using Geometry.
     """
     import pandas as pd, numpy as np
     df = pd.read_csv(csv_path)
@@ -155,7 +191,7 @@ def map_from_tot_and_static(csv_path: Path, total_col: str, static_col: str,
         raise ValueError(f"Missing required columns: {total_col}, {static_col}")
     df = df.copy()
     df["qs_verif"] = df[total_col].astype(float) - df[static_col].astype(float)
-    return map_verification_plane(csv_path, "qs_verif", r, beta, sampling_hz, out_path)
+    return map_verification_plane(df, "qs_verif", geom, sampling_hz, out_path)
 
 
 from kielproc.report import plot_polar_slice_wall
