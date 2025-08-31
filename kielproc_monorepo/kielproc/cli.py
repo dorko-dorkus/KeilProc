@@ -7,7 +7,7 @@ import numpy as np
 from .io import load_legacy_excel, load_logger_csv, unify_schema
 from .physics import rho_from_pT, map_qs_to_qt, venturi_dp_from_qt
 from .translate import compute_translation_table, apply_translation
-from .lag import estimate_lag_xcorr, advance_series
+from .lag import shift_series
 from .report import write_summary_tables, plot_alignment
 
 def build_parser():
@@ -103,7 +103,9 @@ def main(argv=None):
             d0 = blocks[name0]
             lag0 = int(per_block.loc[per_block["block"]==name0, "lag_samples"].iloc[0])
             # Advance piccolo so that it aligns with reference for plotting
-            picc_shift = advance_series(d0[a.piccolo_col].to_numpy(float), lag0)
+            # Positive lag -> piccolo lags the reference.  Shift piccolo forward
+            # (left) by ``lag0`` samples for overlay.
+            picc_shift = shift_series(d0[a.piccolo_col].to_numpy(float), -lag0)
             t = d0["Time_s"] if "Time_s" in d0 else np.arange(len(d0))
             png = plot_alignment(outdir, t, d0[a.ref_col], d0[a.piccolo_col], picc_shift, title=f"Alignment {name0}", stem=f"align_{name0}")
             files.append(png)
