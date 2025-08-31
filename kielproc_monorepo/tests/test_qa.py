@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from kielproc.qa import qa_indices
+from kielproc.qa import qa_indices, DEFAULT_DELTA_OPP_MAX, DEFAULT_W_MAX
 from kielproc.cli import main as cli_main
 
 
@@ -9,6 +9,11 @@ def test_qa_indices_basic():
     d, w = qa_indices(100, 102, 101, 99, 50)
     assert np.isclose(d, 0.04)
     assert np.isclose(w, np.sqrt(8)/(100))
+
+
+def test_qa_default_thresholds():
+    assert np.isclose(DEFAULT_DELTA_OPP_MAX, 0.01)
+    assert np.isclose(DEFAULT_W_MAX, 0.002)
 
 
 def test_fit_records_qa(tmp_path: Path):

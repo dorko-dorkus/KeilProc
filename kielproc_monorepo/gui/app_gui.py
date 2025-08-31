@@ -24,6 +24,7 @@ from kielproc_gui_adapter import (
     fit_alpha_beta, translate_piccolo,
     generate_flow_map_from_csv, generate_polar_slice_from_csv
 )
+from kielproc.qa import DEFAULT_W_MAX, DEFAULT_DELTA_OPP_MAX
 
 class App(tk.Tk):
     def __init__(self):
@@ -96,8 +97,8 @@ class App(tk.Tk):
         self.var_pE = tk.StringVar(value="pE")
         self.var_pW = tk.StringVar(value="pW")
         self.var_qmean = tk.StringVar(value="q_mean")
-        self.var_gate_opp = tk.StringVar(value="")
-        self.var_gate_w = tk.StringVar(value="")
+        self.var_gate_opp = tk.StringVar(value=str(DEFAULT_DELTA_OPP_MAX))
+        self.var_gate_w = tk.StringVar(value=str(DEFAULT_W_MAX))
         ttk.Label(frm, text="Replicate blocks (name=path.csv, comma-separated)").grid(row=row, column=0, sticky="e", **pad)
         ttk.Entry(frm, textvariable=self.var_blocks, width=64).grid(row=row, column=1, columnspan=3, sticky="w", **pad); row+=1
         ttk.Label(frm, text="ref col").grid(row=row, column=0, sticky="e", **pad)
@@ -117,11 +118,15 @@ class App(tk.Tk):
         ttk.Label(frm, text="pW col").grid(row=row, column=2, sticky="e", **pad)
         ttk.Entry(frm, textvariable=self.var_pW, width=10).grid(row=row, column=3, sticky="w", **pad); row+=1
         ttk.Label(frm, text="q_mean col").grid(row=row, column=0, sticky="e", **pad)
-        ttk.Entry(frm, textvariable=self.var_qmean, width=10).grid(row=row, column=1, sticky="w", **pad)
-        ttk.Label(frm, text="Δ_opp max").grid(row=row, column=2, sticky="e", **pad)
-        ttk.Entry(frm, textvariable=self.var_gate_opp, width=10).grid(row=row, column=3, sticky="w", **pad); row+=1
-        ttk.Label(frm, text="W max").grid(row=row, column=0, sticky="e", **pad)
-        ttk.Entry(frm, textvariable=self.var_gate_w, width=10).grid(row=row, column=1, sticky="w", **pad); row+=1
+        ttk.Entry(frm, textvariable=self.var_qmean, width=10).grid(row=row, column=1, sticky="w", **pad); row+=1
+
+        qa_frm = ttk.LabelFrame(frm, text="QA thresholds")
+        qa_frm.grid(row=row, column=0, columnspan=4, sticky="ew", **pad); row+=1
+        ttk.Label(qa_frm, text="Δ_opp max").grid(row=0, column=0, sticky="e", **pad)
+        ttk.Entry(qa_frm, textvariable=self.var_gate_opp, width=10).grid(row=0, column=1, sticky="w", **pad)
+        ttk.Label(qa_frm, text="W max").grid(row=1, column=0, sticky="e", **pad)
+        ttk.Entry(qa_frm, textvariable=self.var_gate_w, width=10).grid(row=1, column=1, sticky="w", **pad)
+
         ttk.Button(frm, text="Fit α,β (with lag removal)", command=self._do_fit).grid(row=row, column=1, sticky="w", **pad); row+=1
 
         # Apply translation

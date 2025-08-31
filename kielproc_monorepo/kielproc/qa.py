@@ -1,6 +1,13 @@
 from __future__ import annotations
 import math
 
+# Default QA thresholds used when gating data.  Values are fractions of
+# dynamic pressure and correspond to 0.2% swirl and 1% opposing-port
+# imbalance respectively.
+DEFAULT_W_MAX = 0.002
+DEFAULT_DELTA_OPP_MAX = 0.01
+
+
 def qa_indices(pN: float, pS: float, pE: float, pW: float, q_mean: float):
     """Compute 90° wall-static quality indices.
 
