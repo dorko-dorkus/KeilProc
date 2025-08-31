@@ -34,6 +34,10 @@ def test_pooling_workflow():
     alpha_vars = np.array([0.01, 0.01, 0.02])
     betas = np.array([2.0, 1.0, 1.5])
     beta_vars = np.array([0.5, 0.5, 0.6])
-    a_hat, a_se, tau2_a, b_hat, b_se, tau2_b, *_ = pool_alpha_beta_random_effects(alphas, alpha_vars, betas, beta_vars)
+    cov_ab = np.array([0.02, 0.01, 0.015])
+    a_hat, a_se, tau2_a, b_hat, b_se, tau2_b, Q_a, Q_b, cov = \
+        pool_alpha_beta_random_effects(alphas, alpha_vars, betas, beta_vars, cov_ab)
     assert 0.8 < a_hat < 1.2
     assert a_se > 0
+    assert cov.shape == (2, 2)
+    assert cov[0, 1] > 0
