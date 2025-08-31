@@ -14,7 +14,7 @@ Comprehensive processing suite for differential pressure data from coal mill duc
 ## Quick start
 
 ```bash
-python -m pip install -r kielproc_monorepo/requirements.txt
+python -m pip install -r kielproc_monorepo/requirements.txt -c kielproc_monorepo/constraints.txt
 python kielproc_monorepo/gui/app_gui.py  # launch the main GUI
 ```
 
@@ -35,11 +35,13 @@ python kielproc_monorepo/duct_dp_visualizer.py --cli --help  # CLI options
 
 ## Testing
 
-Run tests from within the monorepo directory:
+The repository uses [nox](https://nox.thea.codes/) to create an isolated
+virtual environment with pinned dependencies, run the test suite, and execute
+an import-only CLI smoke demo.
 
 ```bash
-cd kielproc_monorepo
-pytest
+python -m pip install nox
+nox
 ```
 
 ## License

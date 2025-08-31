@@ -9,7 +9,7 @@ This repository combines:
 
 ## Quick start
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt -c constraints.txt
 python gui/app_gui.py
 ```
 
@@ -26,4 +26,3 @@ Files are written under the chosen Output directory: CSV tables and PNG plots.
 - Dynamics are processed in samples; seconds derived from Sampling Hz.
 - Throat unknown is fine; geometry is optional for visual scaling only.
 - The original GUI is kept unmodified as `gui/duct_dp_visualizer_tk_original.py`.
-```
