@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 name = "kielproc-suite"
 version = "0.1.0"
 description = "Kiel + wall-static baseline and legacy piccolo translation, with Tk GUI"
-authors = [{name="Brandon's helper"}]
+authors = [{name="Brandon Martin"}]
 license = "MIT"
 dependencies = [
     "numpy>=1.24",
