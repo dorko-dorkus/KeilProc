@@ -11,7 +11,7 @@ def deming_fit(
     n_boot: int = 200,
     random_state: int | None = None,
 ):
-    """Deming regression with optional bootstrap standard errors.
+    r"""Deming regression with optional bootstrap standard errors.
 
     Parameters
     ----------
