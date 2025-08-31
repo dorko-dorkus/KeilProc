@@ -25,26 +25,84 @@ def map_verification_plane(csv_path: Path, qs_col: str, r: float, beta: float, s
     out.to_csv(out_path, index=False)
     return out_path
 
-def fit_alpha_beta(block_specs: Dict[str, Path], ref_col: str, piccolo_col: str, lambda_ratio: float, max_lag: int, outdir: Path) -> Dict[str, str]:
+def fit_alpha_beta(
+    block_specs: Dict[str, Path],
+    ref_col: str,
+    piccolo_col: str,
+    lambda_ratio: float,
+    max_lag: int,
+    outdir: Path,
+    *,
+    pN_col: str = "pN",
+    pS_col: str = "pS",
+    pE_col: str = "pE",
+    pW_col: str = "pW",
+    q_mean_col: str = "q_mean",
+    qa_gate_opp: float | None = None,
+    qa_gate_w: float | None = None,
+) -> Dict[str, object]:
     blocks = {name: pd.read_csv(path) for name, path in block_specs.items()}
-    per_block, pooled = compute_translation_table(blocks, ref_key=ref_col, picc_key=piccolo_col, lambda_ratio=lambda_ratio, max_lag=max_lag)
+    per_block, pooled = compute_translation_table(
+        blocks,
+        ref_key=ref_col,
+        picc_key=piccolo_col,
+        lambda_ratio=lambda_ratio,
+        max_lag=max_lag,
+    )
+
+    # QA indices similar to CLI
+    from kielproc.qa import qa_indices
+    qa_rows = []
+    for name, df in blocks.items():
+        pN = df[pN_col].mean()
+        pS = df[pS_col].mean()
+        pE = df[pE_col].mean()
+        pW = df[pW_col].mean()
+        q = df[q_mean_col].mean()
+        d_opp, W = qa_indices(pN, pS, pE, pW, q)
+        ok = True
+        if qa_gate_opp is not None and d_opp > qa_gate_opp:
+            ok = False
+        if qa_gate_w is not None and W > qa_gate_w:
+            ok = False
+        qa_rows.append(dict(block=name, delta_opp=d_opp, W=W, qa_pass=ok))
+    qa_df = pd.DataFrame(qa_rows)
+    if not qa_df["qa_pass"].all():
+        outdir.mkdir(parents=True, exist_ok=True)
+        files = write_summary_tables(outdir, qa_df, None)
+        raise RuntimeError("Ring QA failed; aborting fit. Outputs: " + "; ".join(files))
+
+    per_block = per_block.merge(qa_df, on="block", how="left")
     outdir.mkdir(parents=True, exist_ok=True)
     files = write_summary_tables(outdir, per_block, pooled)
+
     # Make an alignment plot for the first block if present
     if blocks and not per_block.empty:
         name0 = list(blocks.keys())[0]
         d0 = blocks[name0]
-        lag0 = int(per_block.loc[per_block["block"]==name0, "lag_samples"].iloc[0])
+        lag0 = int(per_block.loc[per_block["block"] == name0, "lag_samples"].iloc[0])
         # Positive lag -> piccolo lags the reference.  Shift piccolo forward
         # (left) by ``lag0`` samples for overlay.
         picc_shift = shift_series(d0[piccolo_col].to_numpy(float), -lag0)
         t = d0["Time_s"] if "Time_s" in d0 else np.arange(len(d0))
-        png = plot_alignment(outdir, t, d0[ref_col], d0[piccolo_col], picc_shift, title=f"Alignment {name0}", stem=f"align_{name0}")
+        png = plot_alignment(
+            outdir,
+            t,
+            d0[ref_col],
+            d0[piccolo_col],
+            picc_shift,
+            title=f"Alignment {name0}",
+            stem=f"align_{name0}",
+        )
         files.append(png)
-    return {"per_block_csv": str(outdir/"alpha_beta_by_block.csv"),
-            "pooled_csv": str(outdir/"alpha_beta_pooled.csv"),
-            "pooled_json": str(outdir/"alpha_beta_pooled.json") if (outdir/"alpha_beta_pooled.json").exists() else "",
-            "align_png": str(outdir/"align_"+list(blocks.keys())[0]+".png") if blocks else ""}
+    return {
+        "per_block_csv": str(outdir / "alpha_beta_by_block.csv"),
+        "per_block_json": str(outdir / "alpha_beta_by_block.json"),
+        "pooled_csv": str(outdir / "alpha_beta_pooled.csv") if (outdir / "alpha_beta_pooled.csv").exists() else "",
+        "pooled_json": str(outdir / "alpha_beta_pooled.json") if (outdir / "alpha_beta_pooled.json").exists() else "",
+        "align_png": str(outdir / f"align_{list(blocks.keys())[0]}.png") if blocks else "",
+        "blocks_info": per_block.to_dict(orient="records"),
+    }
 
 def translate_piccolo(csv_path: Path, alpha: float, beta: float, piccolo_col: str, out_col: str, out_path: Path) -> Path:
     import pandas as pd

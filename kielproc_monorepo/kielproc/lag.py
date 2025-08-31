@@ -21,6 +21,8 @@ def estimate_lag_xcorr(
         Array of lags searched.
     c_sub : ndarray
         The cross-correlation sequence for the lags searched.
+    r_peak : float
+        Pearson correlation coefficient at the chosen lag.
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -51,7 +53,21 @@ def estimate_lag_xcorr(
     c_eval = np.abs(c_sub) if use_abs else c_sub
     best = int(np.nanargmax(c_eval))
     lag = lags[best]
-    return lag, lags, c_sub
+
+    # compute correlation coefficient at the chosen lag
+    if lag >= 0:
+        xs = x[: n - lag]
+        ys = y[lag: n]
+    else:
+        xs = x[-lag: n]
+        ys = y[: n + lag]
+    mask = np.isfinite(xs) & np.isfinite(ys)
+    if mask.sum() > 1:
+        r_peak = float(np.corrcoef(xs[mask], ys[mask])[0, 1])
+    else:
+        r_peak = float("nan")
+
+    return lag, lags, c_sub, r_peak
 
 def shift_series(y: np.ndarray, lag: int):
     """
