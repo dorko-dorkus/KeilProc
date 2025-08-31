@@ -27,7 +27,19 @@ def test_deming_known_slope():
     y_noisy = y_true + rng.normal(scale=0.2, size=x.size)
     a, b, sa, sb = deming_fit(x_noisy, y_noisy, lambda_ratio=1.0)
     assert 1.6 < a < 2.4
-    assert sa >= 0.0
+    assert sa > 0.0
+    assert sb > 0.0
+
+
+def test_deming_se_not_zero_with_noise():
+    rng = np.random.default_rng(1)
+    x = np.linspace(0, 5, 100)
+    y_true = -1.0 + 0.5 * x
+    x_noisy = x + rng.normal(scale=0.05, size=x.size)
+    y_noisy = y_true + rng.normal(scale=0.05, size=x.size)
+    _, _, sa, sb = deming_fit(x_noisy, y_noisy, lambda_ratio=1.0)
+    assert sa > 0.0
+    assert sb > 0.0
 
 def test_pooling_workflow():
     alphas = np.array([0.9, 1.1, 1.0])
