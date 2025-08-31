@@ -23,7 +23,8 @@ if str(ROOT) not in sys.path:
 from kielproc_gui_adapter import (
     map_verification_plane, map_from_tot_and_static,
     fit_alpha_beta, translate_piccolo,
-    generate_flow_map_from_csv, generate_polar_slice_from_csv
+    generate_flow_map_from_csv, generate_polar_slice_from_csv,
+    legacy_results_from_csv, ResultsConfig
 )
 from kielproc.qa import DEFAULT_W_MAX, DEFAULT_DELTA_OPP_MAX
 from kielproc.geometry import (
@@ -197,6 +198,23 @@ class App(tk.Tk):
         ttk.Label(frm, text="beta").grid(row=row, column=2, sticky="e", **pad)
         ttk.Entry(frm, textvariable=self.var_beta, width=10).grid(row=row, column=3, sticky="w", **pad); row+=1
         ttk.Button(frm, text="Apply translation → CSV", command=self._do_translate).grid(row=row, column=1, sticky="w", **pad); row+=1
+
+        # Legacy results
+        ttk.Label(frm, text="Legacy results from raw CSV").grid(row=row, column=0, sticky="w", **pad); row+=1
+        self.var_res_csv = tk.StringVar()
+        self.var_res_static = tk.StringVar(value="Static")
+        self.var_res_pic_units = tk.StringVar(value="mA")
+        self.var_res_pic_rng = tk.DoubleVar(value=6.7)
+        ttk.Label(frm, text="CSV input").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_res_csv, width=56).grid(row=row, column=1, **pad)
+        ttk.Button(frm, text="Browse", command=lambda: self._pick(self.var_res_csv, [("CSV","*.csv")])).grid(row=row, column=2, **pad); row+=1
+        ttk.Label(frm, text="Static col").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_res_static, width=16).grid(row=row, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="Piccolo units").grid(row=row, column=2, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_res_pic_units, width=10).grid(row=row, column=3, sticky="w", **pad); row+=1
+        ttk.Label(frm, text="Piccolo range mbar").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_res_pic_rng, width=10).grid(row=row, column=1, sticky="w", **pad); row+=1
+        ttk.Button(frm, text="Compute legacy results", command=self._do_results).grid(row=row, column=1, sticky="w", **pad); row+=1
 
         ttk.Separator(frm, orient="horizontal").grid(row=row, column=0, columnspan=4, sticky="ew", **pad); row+=1
 
@@ -405,6 +423,21 @@ class App(tk.Tk):
             self.log(f"[OK] Wrote {res}")
         except Exception as e:
             self.log(f"[ERROR] translate: {e}\n{traceback.format_exc()}")
+
+    def _do_results(self):
+        try:
+            outdir = Path(self.var_outdir.get()); outdir.mkdir(parents=True, exist_ok=True)
+            cfg = ResultsConfig(
+                static_col=self.var_res_static.get().strip() or None,
+                piccolo_units=self.var_res_pic_units.get().strip() or "mA",
+                piccolo_range_mbar=float(self.var_res_pic_rng.get()),
+                duct_height_m=float(self.var_height.get()) if self.var_height.get() else None,
+                duct_width_m=float(self.var_width.get()) if self.var_width.get() else None,
+            )
+            res = legacy_results_from_csv(Path(self.var_res_csv.get()), cfg, outdir/"legacy_results.csv")
+            self.log("[OK] Results: " + "; ".join(f"{k}={v}" for k,v in res.items()))
+        except Exception as e:
+            self.log(f"[ERROR] results: {e}\n{traceback.format_exc()}")
 
     def _do_flowmap(self):
         try:

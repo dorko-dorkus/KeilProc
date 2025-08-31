@@ -20,6 +20,7 @@ from kielproc.geometry import (
     r_ratio,
     beta_from_geometry,
 )
+from kielproc.legacy_results import ResultsConfig, compute_results as compute_legacy_results
 
 
 def map_verification_plane(csv_or_df: Union[Path, pd.DataFrame], qs_col: str,
@@ -146,6 +147,16 @@ def translate_piccolo(csv_path: Path, alpha: float, beta: float, piccolo_col: st
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(out_path, index=False)
     return out_path
+
+
+def legacy_results_from_csv(csv_path: Path, cfg: ResultsConfig, out_path: Path) -> dict:
+    """Compute legacy-style summary fields and persist them to CSV.
+
+    Returns the computed dictionary for convenience."""
+    res = compute_legacy_results(csv_path, cfg)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([res]).to_csv(out_path, index=False)
+    return res
 
 
 from kielproc.geometry import DiffuserGeometry, infer_geometry_from_table, planes_to_z, plane_value_to_z
