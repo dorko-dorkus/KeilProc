@@ -1,11 +1,26 @@
 
 import numpy as np
 
-def estimate_lag_xcorr(x: np.ndarray, y: np.ndarray, max_lag: int = None):
-    """
-    Estimate integer-sample lag between signals x (reference) and y (to be shifted)
-    by maximizing cross-correlation. Returns lag where y should be shifted forward
-    (i.e., y_shifted[k] = y[k - lag]). Positive lag -> y lags x.
+
+def estimate_lag_xcorr(
+    x: np.ndarray, y: np.ndarray, max_lag: int = None, *, use_abs: bool = True
+):
+    """Estimate integer-sample lag between ``x`` (reference) and ``y``.
+
+    The lag is determined by maximizing the cross-correlation sequence ``r(τ)``.
+    By default, the absolute value ``|r(τ)|`` is maximized so that phase-reversed
+    signals are still detected.  Set ``use_abs=False`` to maximize the signed
+    cross-correlation when the sign of the correlation matters.
+
+    Returns
+    -------
+    lag : int
+        The lag where ``y`` should be shifted forward (``y_shifted[k] = y[k - lag]``).
+        Positive lag means ``y`` lags ``x``.
+    lags : ndarray
+        Array of lags searched.
+    c_sub : ndarray
+        The cross-correlation sequence for the lags searched.
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -25,13 +40,16 @@ def estimate_lag_xcorr(x: np.ndarray, y: np.ndarray, max_lag: int = None):
     Y = np.fft.rfft(y, N)
     c = np.fft.irfft(X * np.conj(Y), N)
     # shift so that zero-lag is at center
-    c = np.concatenate((c[-(n-1):], c[:n]))
+    c = np.concatenate((c[-(n - 1) :], c[:n]))
     # take subset of lags
-    idx_center = len(c)//2
+    idx_center = len(c) // 2
     start = idx_center - max_lag
     end = idx_center + max_lag + 1
     c_sub = c[start:end]
-    best = int(np.nanargmax(c_sub))
+
+    # choose lag based on absolute or signed correlation as requested
+    c_eval = np.abs(c_sub) if use_abs else c_sub
+    best = int(np.nanargmax(c_eval))
     lag = lags[best]
     return lag, lags, c_sub
 
