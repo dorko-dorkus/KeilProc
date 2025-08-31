@@ -19,6 +19,7 @@ from .geometry import (
     beta_from_geometry,
     geometry_summary,
 )
+from .legacy_results import ResultsConfig, compute_results as compute_legacy_results
 
 __all__ = [
     "map_qs_to_qt", "venturi_dp_from_qt", "rho_from_pT",
@@ -29,4 +30,5 @@ __all__ = [
     "compute_translation_table", "apply_translation",
     "write_summary_tables", "plot_alignment", "qa_indices",
     "Geometry", "plane_area", "effective_upstream_area", "throat_area", "r_ratio", "beta_from_geometry", "geometry_summary",
+    "ResultsConfig", "compute_legacy_results",
 ]
