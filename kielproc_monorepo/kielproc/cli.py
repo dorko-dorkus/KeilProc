@@ -9,10 +9,17 @@ from .physics import rho_from_pT, map_qs_to_qt, venturi_dp_from_qt
 from .translate import compute_translation_table, apply_translation
 from .lag import shift_series
 from .report import write_summary_tables, plot_alignment
+from .legacy_results import ResultsConfig, compute_results as compute_legacy_results
 
 def build_parser():
     p = argparse.ArgumentParser(prog="kielproc", description="Kiel + wall-static baseline & legacy translation")
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    i0 = sub.add_parser("results", help="Compute legacy-style results from a logger CSV")
+    i0.add_argument("--csv", required=True, help="Input logger CSV path")
+    i0.add_argument("--config", help="JSON file with ResultsConfig fields")
+    i0.add_argument("--json-out", help="Optional path to write results as JSON")
+    i0.add_argument("--csv-out", help="Optional path to write results as CSV")
 
     i1 = sub.add_parser("map", help="Map verification-plane Kiel/static to throat Δp_vent for comparison")
     i1.add_argument("--csv", required=True)
@@ -51,7 +58,22 @@ def build_parser():
 def main(argv=None):
     ap = build_parser()
     a = ap.parse_args(argv)
-    if a.cmd == "map":
+    if a.cmd == "results":
+        cfg_dict = {}
+        if a.config:
+            with open(a.config) as fh:
+                cfg_dict = json.load(fh)
+        cfg = ResultsConfig(**cfg_dict)
+        res = compute_legacy_results(a.csv, cfg)
+        if a.json_out:
+            Path(a.json_out).parent.mkdir(parents=True, exist_ok=True)
+            with open(a.json_out, "w") as fh:
+                json.dump(res, fh, indent=2)
+        if a.csv_out:
+            Path(a.csv_out).parent.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame([res]).to_csv(a.csv_out, index=False)
+        print(json.dumps(res, indent=2))
+    elif a.cmd == "map":
         df = pd.read_csv(a.csv)
         qt = map_qs_to_qt(df[a.qs_col].to_numpy(float), r=a.r, rho_t_over_rho_s=1.0)
         dpv = venturi_dp_from_qt(qt, beta=a.beta)
