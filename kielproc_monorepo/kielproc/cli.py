@@ -62,7 +62,7 @@ def main(argv=None):
             n = len(out); out["Sample"] = np.arange(n); out["Time_s"] = out["Sample"]/float(a.sampling_hz)
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         out.to_csv(a.out, index=False)
-        print(f"Wrote {a.out}")
+        print(json.dumps({"mapped_csv": str(Path(a.out))}))
     elif a.cmd == "fit":
         blocks = {}
         for spec in a.blocks:
@@ -90,14 +90,14 @@ def main(argv=None):
 
         if not qa_df["qa_pass"].all():
             outdir = Path(a.outdir); outdir.mkdir(parents=True, exist_ok=True)
-            files = write_summary_tables(outdir, qa_df, None)
-            print("\n".join(str(f) for f in files))
+            write_summary_tables(outdir, qa_df, None)
             raise SystemExit("Ring QA failed; aborting fit")
 
         # Merge QA with translation results
         per_block = per_block.merge(qa_df, on="block", how="left")
         outdir = Path(a.outdir); outdir.mkdir(parents=True, exist_ok=True)
-        files = write_summary_tables(outdir, per_block, pooled)
+        write_summary_tables(outdir, per_block, pooled)
+        png = ""
         if blocks and not per_block.empty:
             name0 = list(blocks.keys())[0]
             d0 = blocks[name0]
@@ -108,14 +108,23 @@ def main(argv=None):
             picc_shift = shift_series(d0[a.piccolo_col].to_numpy(float), -lag0)
             t = d0["Time_s"] if "Time_s" in d0 else np.arange(len(d0))
             png = plot_alignment(outdir, t, d0[a.ref_col], d0[a.piccolo_col], picc_shift, title=f"Alignment {name0}", stem=f"align_{name0}")
-            files.append(png)
-        print("\n".join(str(f) for f in files))
+        result = {
+            "per_block_csv": str(outdir/"alpha_beta_by_block.csv"),
+            "per_block_json": str(outdir/"alpha_beta_by_block.json"),
+            "pooled_csv": str(outdir/"alpha_beta_pooled.csv") if (outdir/"alpha_beta_pooled.csv").exists() else "",
+            "pooled_json": str(outdir/"alpha_beta_pooled.json") if (outdir/"alpha_beta_pooled.json").exists() else "",
+            "align_png": png,
+            "blocks_info": per_block.to_dict(orient="records"),
+        }
+        print(json.dumps(result, indent=2))
+        for row in per_block.itertuples():
+            print(f"block={row.block} τ={row.lag_samples} r_peak={row.r_peak:.3f}")
     elif a.cmd == "translate":
         df = pd.read_csv(a.csv)
         out = apply_translation(df, a.alpha, a.beta, src_col=a.in_col, out_col=a.out_col)
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         out.to_csv(a.out, index=False)
-        print(f"Wrote {a.out}")
+        print(json.dumps({"translated_csv": str(Path(a.out))}))
 
 if __name__ == "__main__":
     main()

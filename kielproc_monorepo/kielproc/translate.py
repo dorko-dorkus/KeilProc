@@ -15,12 +15,13 @@ def compute_translation_table(blocks: dict, ref_key="mapped_ref", picc_key="picc
         if np.nanstd(y) < 1e-12 or np.all(~np.isfinite(y)):
             # skip flat/missing piccolo
             continue
-        lag, _, _ = estimate_lag_xcorr(x, y, max_lag=max_lag)
+        lag, _, _, r_peak = estimate_lag_xcorr(x, y, max_lag=max_lag)
         # Positive ``lag`` means piccolo lags the reference.  Align by shifting
         # piccolo forward (left) with ``shift_series(y, -lag)``.
         y_shift = shift_series(y, -lag)
         m, b, sa, sb = deming_fit(x, y_shift, lambda_ratio=lambda_ratio)
-        rows.append(dict(block=name, alpha=m, beta=b, alpha_se=sa, beta_se=sb, lag_samples=int(lag)))
+        rows.append(dict(block=name, alpha=m, beta=b, alpha_se=sa, beta_se=sb,
+                         lag_samples=int(lag), r_peak=float(r_peak)))
     tidy = pd.DataFrame(rows).set_index("block") if rows else pd.DataFrame(columns=["alpha","beta","alpha_se","beta_se","lag_samples"])
     pooled = None
     if not tidy.empty and tidy["alpha_se"].gt(0).all() and tidy["beta_se"].gt(0).all():
