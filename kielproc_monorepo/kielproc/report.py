@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from pathlib import Path
 
 def write_summary_tables(outdir: Path, per_block: pd.DataFrame, pooled: dict | None):
@@ -54,8 +55,11 @@ def plot_flow_map_unwrapped(outdir: Path, z_m, theta_deg, values, geom=None, cma
     outdir.mkdir(parents=True, exist_ok=True)
     fig = plt.figure(figsize=(10,4.2))
     extent = [z_m.min(), z_m.max(), th.min(), th.max()]
-    plt.imshow(V, aspect='auto', origin='lower', extent=extent, cmap=cmap)
-    plt.colorbar(label="value" + (" (normalized)" if norm_by else ""))
+    cmap = cmap or "coolwarm"
+    norm = mcolors.CenteredNorm(vcenter=0.0)
+    img = plt.imshow(V, aspect='auto', origin='lower', extent=extent, cmap=cmap, norm=norm)
+    cbar_label = "Δps/⟨q⟩" if norm_by not in (None, 0) else "Δps (Pa)"
+    plt.colorbar(img, label=cbar_label)
     plt.xlabel("Axial position z (m)")
     plt.ylabel("Circumferential angle θ (deg)")
     if geom is not None:
@@ -92,7 +96,7 @@ def compute_circumferential_static_deviation(df, theta_col:str, plane_col:str, p
 
 
 def plot_polar_slice_wall(outdir: Path, theta_deg, values, R: float = 1.0, band: tuple=(0.9, 1.0),
-                          title="Wall static deviation (polar slice)", stem="polar_slice", norm_by=None):
+                          title="Wall static deviation (polar slice)", stem="polar_slice", norm_by=None, cmap=None):
     """
     Render a polar cross-section slice at one axial plane, assuming wall-static values around the circumference.
     Draws a colored annulus from r=band[0]*R to r=band[1]*R where color varies with θ.
@@ -127,8 +131,11 @@ def plot_polar_slice_wall(outdir: Path, theta_deg, values, R: float = 1.0, band:
     outdir.mkdir(parents=True, exist_ok=True)
     fig = plt.figure(figsize=(5.2,5.2))
     ax = fig.add_subplot(111)
-    pcm = ax.pcolormesh(X, Y, VV, shading='auto')
-    fig.colorbar(pcm, ax=ax, label="value" + (" (normalized)" if norm_by else ""))
+    cmap = cmap or "coolwarm"
+    norm = mcolors.CenteredNorm(vcenter=0.0)
+    pcm = ax.pcolormesh(X, Y, VV, shading='auto', cmap=cmap, norm=norm)
+    cbar_label = "Δps/⟨q⟩" if norm_by not in (None, 0) else "Δps (Pa)"
+    fig.colorbar(pcm, ax=ax, label=cbar_label)
     # draw outer circle for context
     circ = plt.Circle((0,0), R, fill=False, linewidth=1.0)
     ax.add_patch(circ)

@@ -55,7 +55,7 @@ def translate_piccolo(csv_path: Path, alpha: float, beta: float, piccolo_col: st
     return out_path
 
 
-from kielproc.geometry import DiffuserGeometry, infer_geometry_from_table
+from kielproc.geometry import DiffuserGeometry, infer_geometry_from_table, planes_to_z, plane_value_to_z
 from kielproc.report import plot_flow_map_unwrapped, compute_circumferential_static_deviation
 
 def generate_flow_map_from_csv(data_csv: Path, theta_col: str, plane_col: str, ps_col: str,
@@ -74,9 +74,7 @@ def generate_flow_map_from_csv(data_csv: Path, theta_col: str, plane_col: str, p
         g = pd.read_csv(geom_csv)
         geom = infer_geometry_from_table(g) or None
     planes, thetas, dev = compute_circumferential_static_deviation(df, theta_col, plane_col, ps_col, agg=agg)
-    z = planes.astype(float)
-    # If planes are plane indices, try to parse to meters if a geometry table provides L and explicit z columns exist
-    # Otherwise assume planes are already z in meters
+    z = planes_to_z(planes, geom)
     norm_val = None
     if normalize_by_col and normalize_by_col in df.columns:
         # Use plane-mean of the normalizer to avoid overweighting noisy points
@@ -142,11 +140,9 @@ def generate_polar_slice_from_csv(data_csv: Path, theta_col: str, plane_col: str
         g = pd.read_csv(geom_csv)
         geo = infer_geometry_from_table(g)
         if geo is not None:
-            # If plane_col is z (meters), use as-is; else if indexed 0..N, map to z via linear spacing
-            try:
-                z = float(plane_value)
-            except Exception:
-                z = 0.0
+            plane_vals = df[plane_col].dropna().astype(float).unique()
+            plane_vals.sort()
+            z = plane_value_to_z(pv, plane_vals, geo)
             R = float(geo.radius_at(np.array([z]))[0])
     png = plot_polar_slice_wall(outdir, th, vals, R=R, band=band,
                                 title=f"Wall static deviation at {plane_col}={plane_value}", stem="polar_slice", norm_by=norm_val)
