@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import math
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, scrolledtext
 import pandas as pd
 
 # Ensure repo root is importable when running as "python gui/app_gui.py"
@@ -39,6 +39,39 @@ from kielproc.geometry import (
     beta_from_geometry,
 )
 
+
+class ScrollableFrame(ttk.Frame):
+    """A simple scrollable frame container using a canvas and vertical scrollbar."""
+
+    def __init__(self, container, *args, **kwargs):
+        super().__init__(container, *args, **kwargs)
+        self.canvas = tk.Canvas(self, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        self.inner = ttk.Frame(self.canvas)
+        self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+
+        self.inner.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+        )
+        self.canvas.bind(
+            "<Configure>", lambda e: self.canvas.itemconfig(self._win, width=e.width)
+        )
+
+        def _on_mousewheel(event):
+            delta = event.delta
+            if delta == 0 and event.num in (4, 5):
+                delta = 120 if event.num == 4 else -120
+            self.canvas.yview_scroll(int(-delta / 120), "units")
+
+        self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        self.canvas.bind_all("<Button-4>", _on_mousewheel)
+        self.canvas.bind_all("<Button-5>", _on_mousewheel)
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -52,11 +85,16 @@ class App(tk.Tk):
         self._build()
 
     def _build(self):
-        self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True)
-        self.tab_phys = ttk.Frame(self.nb); self.nb.add(self.tab_phys, text="Physics / Translation")
-        self._build_phys(self.tab_phys)
-        self.tab_results = ttk.Frame(self.nb); self.nb.add(self.tab_results, text="Results")
-        self._build_results(self.tab_results)
+        self.nb = ttk.Notebook(self)
+        self.nb.pack(fill="both", expand=True)
+
+        self.tab_phys = ScrollableFrame(self.nb)
+        self.nb.add(self.tab_phys, text="Physics / Translation")
+        self._build_phys(self.tab_phys.inner)
+
+        self.tab_results = ScrollableFrame(self.nb)
+        self.nb.add(self.tab_results, text="Results")
+        self._build_results(self.tab_results.inner)
 
     def _build_phys(self, frm):
         pad = {"padx": 6, "pady": 4}
@@ -257,7 +295,7 @@ class App(tk.Tk):
         ttk.Button(frm, text="Generate Polar Slice", command=self._do_polar).grid(row=row, column=2, sticky="w", **pad); row+=1
 
         # Log box
-        self.txt = tk.Text(frm, height=12)
+        self.txt = scrolledtext.ScrolledText(frm, height=12)
         self.txt.grid(row=row, column=0, columnspan=4, sticky="nsew", **pad)
         frm.grid_rowconfigure(row, weight=1); frm.grid_columnconfigure(1, weight=1)
 
@@ -288,7 +326,7 @@ class App(tk.Tk):
 
         ttk.Button(frm, text="Compute Results", command=self._compute_results).grid(row=row, column=1, sticky="w", **pad); row+=1
 
-        self.txt_results = tk.Text(frm, height=20)
+        self.txt_results = scrolledtext.ScrolledText(frm, height=20)
         self.txt_results.grid(row=row, column=0, columnspan=3, sticky="nsew", **pad)
         frm.grid_rowconfigure(row, weight=1); frm.grid_columnconfigure(1, weight=1)
 

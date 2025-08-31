@@ -13,7 +13,7 @@ Author: Brandon's helper (MIT)
 import sys, os, threading, traceback
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, scrolledtext
 
 # Try to import the analysis functions from your existing module
 Analyzer = None
@@ -35,6 +35,32 @@ if Analyzer is None:
         "Place duct_dp_visualizer.py (or duct_dp_visualizer_v12.py) in the same folder as this script.\n"
         f"Last error: {_module_err}"
     )
+
+class ScrollableFrame(ttk.Frame):
+    """A simple scrollable frame with vertical scrollbar."""
+
+    def __init__(self, container, *args, **kwargs):
+        super().__init__(container, *args, **kwargs)
+        self.canvas = tk.Canvas(self, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.inner = ttk.Frame(self.canvas)
+        self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfig(self._win, width=e.width))
+
+        def _on_mousewheel(event):
+            delta = event.delta
+            if delta == 0 and event.num in (4, 5):
+                delta = 120 if event.num == 4 else -120
+            self.canvas.yview_scroll(int(-delta / 120), "units")
+
+        self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        self.canvas.bind_all("<Button-4>", _on_mousewheel)
+        self.canvas.bind_all("<Button-5>", _on_mousewheel)
+
 
 class App(tk.Tk):
     def __init__(self):
@@ -61,10 +87,11 @@ class App(tk.Tk):
     def _build(self):
         pad = {"padx": 6, "pady": 4}
 
-        frm = ttk.Frame(self); frm.pack(fill="both", expand=True)
+        frm = ScrollableFrame(self)
+        frm.pack(fill="both", expand=True)
 
         # Input type
-        f1 = ttk.LabelFrame(frm, text="Input")
+        f1 = ttk.LabelFrame(frm.inner, text="Input")
         f1.pack(fill="x", **pad)
 
         ttk.Radiobutton(f1, text="Excel", variable=self.var_in_excel, value=True,
@@ -88,7 +115,7 @@ class App(tk.Tk):
         ttk.Entry(f1, textvariable=self.var_time, width=18).grid(row=3, column=2, sticky="w", padx=(110,4), pady=4)
 
         # Params
-        f2 = ttk.LabelFrame(frm, text="Parameters")
+        f2 = ttk.LabelFrame(frm.inner, text="Parameters")
         f2.pack(fill="x", **pad)
 
         ttk.Label(f2, text="Bottom/Top fraction (0.05–0.40):").grid(row=0, column=0, sticky="e", **pad)
@@ -101,7 +128,7 @@ class App(tk.Tk):
         ttk.Checkbutton(f2, text="Zip outputs after run", variable=self.var_zip).grid(row=1, column=2, sticky="w", **pad)
 
         # Output + run
-        f3 = ttk.LabelFrame(frm, text="Run")
+        f3 = ttk.LabelFrame(frm.inner, text="Run")
         f3.pack(fill="both", expand=True, **pad)
 
         ttk.Label(f3, text="Output folder:").grid(row=0, column=0, sticky="e", **pad)
@@ -112,7 +139,7 @@ class App(tk.Tk):
         self.btn_run.grid(row=1, column=0, **pad)
         ttk.Button(f3, text="Open Output", command=self._open_out).grid(row=1, column=1, sticky="w", **pad)
 
-        self.txt = tk.Text(f3, height=14, wrap="word")
+        self.txt = scrolledtext.ScrolledText(f3, height=14, wrap="word")
         self.txt.grid(row=2, column=0, columnspan=3, sticky="nsew", **pad)
         f3.rowconfigure(2, weight=1); f3.columnconfigure(1, weight=1)
 
