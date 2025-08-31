@@ -6,8 +6,19 @@ from .lag import estimate_lag_xcorr, shift_series
 from .deming import deming_fit
 from .pooling import pool_alpha_beta_random_effects
 
-def compute_translation_table(blocks: dict, ref_key="mapped_ref", picc_key="piccolo", 
-                              lambda_ratio=1.0, max_lag=300, sampling_hz=None):
+
+def compute_translation_table(
+    blocks: dict,
+    ref_key="mapped_ref",
+    picc_key="piccolo",
+    lambda_ratio=1.0,
+    max_lag=300,
+    sampling_hz=None,
+    *,
+    bootstrap: bool = False,
+    n_boot: int = 200,
+    random_state: int | None = None,
+):
     rows = []
     for name, df in blocks.items():
         x = df[ref_key].to_numpy(float)
@@ -19,7 +30,14 @@ def compute_translation_table(blocks: dict, ref_key="mapped_ref", picc_key="picc
         # Positive ``lag`` means piccolo lags the reference.  Align by shifting
         # piccolo forward (left) with ``shift_series(y, -lag)``.
         y_shift = shift_series(y, -lag)
-        m, b, sa, sb = deming_fit(x, y_shift, lambda_ratio=lambda_ratio)
+        m, b, sa, sb = deming_fit(
+            x,
+            y_shift,
+            lambda_ratio=lambda_ratio,
+            bootstrap=bootstrap,
+            n_boot=n_boot,
+            random_state=random_state,
+        )
         rows.append(dict(block=name, alpha=m, beta=b, alpha_se=sa, beta_se=sb,
                          lag_samples=int(lag), r_peak=float(r_peak)))
     tidy = pd.DataFrame(rows).set_index("block") if rows else pd.DataFrame(columns=["alpha","beta","alpha_se","beta_se","lag_samples"])
