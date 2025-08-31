@@ -2,6 +2,43 @@
 import numpy as np
 
 
+def pool_alpha_beta_gls(alphas, betas, cov_mats):
+    """Pool correlated alpha/beta estimates via GLS.
+
+    Parameters
+    ----------
+    alphas, betas : array-like
+        Per-replicate estimates of slope (alpha) and intercept (beta).
+    cov_mats : array-like
+        Sequence of 2x2 covariance matrices corresponding to each replicate.
+
+    Returns
+    -------
+    tuple
+        ``(alpha_pooled, alpha_se, beta_pooled, beta_se, cov_pooled)`` where
+        ``cov_pooled`` is the 2x2 covariance matrix of the pooled estimates.
+    """
+
+    alphas = np.asarray(alphas, dtype=float)
+    betas = np.asarray(betas, dtype=float)
+    cov_mats = np.asarray(cov_mats, dtype=float)
+
+    Sum_W = np.zeros((2, 2))
+    Sum_Wtheta = np.zeros(2)
+
+    for a, b, C in zip(alphas, betas, cov_mats):
+        W = np.linalg.inv(C)
+        Sum_W += W
+        Sum_Wtheta += W @ np.array([a, b])
+
+    cov_pooled = np.linalg.inv(Sum_W)
+    pooled = cov_pooled @ Sum_Wtheta
+    a_hat, b_hat = pooled
+    a_se, b_se = np.sqrt(np.diag(cov_pooled))
+
+    return float(a_hat), float(a_se), float(b_hat), float(b_se), cov_pooled
+
+
 def pool_alpha_beta_random_effects(alphas, alpha_vars, betas, beta_vars, cov_ab=None):
     """Random-effects pooling for correlated alpha/beta estimates.
 
