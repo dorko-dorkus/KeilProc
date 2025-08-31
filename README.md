@@ -25,6 +25,19 @@ python kielproc_monorepo/duct_dp_visualizer.py            # PySimpleGUI
 python kielproc_monorepo/duct_dp_visualizer.py --cli --help  # CLI options
 ```
 
+## Windows installer
+
+```bash
+cd kielproc_monorepo
+pyinstaller --noconsole --name KeilProc gui/app_gui.py
+cd ..
+ISCC tools/installer/keilproc.iss
+```
+
+The PyInstaller step writes `kielproc_monorepo/dist/KeilProc/KeilProc.exe`.
+The Inno Setup script creates `tools/installer/Output/KeilProcInstaller.exe`.
+
+
 ## Features
 
 - Map verification-plane static pressure to throat flow and venturi differential pressure.
