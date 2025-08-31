@@ -6,6 +6,25 @@ import numpy as np
 import re, json, math
 from typing import Optional, List
 
+NUMERIC_FIELDS_CANON = ["Static", "VP", "Temperature", "Piccolo"]
+
+
+@dataclass
+class LegacyCube:
+    """3-D workbook view: ports × samples × fields, NaN-padded per port."""
+    ports: list[str]
+    fields: list[str]
+    data: np.ndarray  # shape (P, Nmax, F), dtype=float
+    counts: np.ndarray  # per-port valid sample counts, shape (P,)
+    workbook: str
+
+    def to_dataframe(self) -> pd.DataFrame:
+        P, N, F = self.data.shape
+        idx = pd.MultiIndex.from_product([self.ports, range(N)], names=["Port", "Sample"])
+        df = pd.DataFrame(self.data.reshape(P * N, F), index=idx, columns=self.fields)
+        mask = np.concatenate([np.r_[True] * c + np.r_[False] * (N - c) for c in self.counts])
+        return df[mask]
+
 # Columns expected in every parsed sheet.  These are used to validate
 # that the parser was able to populate all required fields when reading a
 # legacy workbook.  The list can be extended in the future as additional
@@ -31,17 +50,65 @@ def _missing_required(df: pd.DataFrame) -> List[str]:
     """Return a list of required column names that are absent in ``df``."""
     return [c for c in REQUIRED_COLUMNS if c not in df.columns]
 
-def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold: float=1e-6) -> dict:
-    """Parse legacy 2007/2011/2018 workbooks into standardized CSVs."""
+
+def _to_time_s(df: pd.DataFrame) -> pd.Series:
+    if "Time" in df:
+        t = pd.to_datetime(df["Time"], errors="coerce")
+        if t.notna().any():
+            t0 = t.dropna().iloc[0]
+            return (t - t0).dt.total_seconds()
+    if "Sample" in df:
+        # Fallback: monotonic samples if present
+        return pd.to_numeric(df["Sample"], errors="coerce")
+    return pd.Series([np.nan] * len(df), name="Time_s")
+
+
+def _frames_to_cube(workbook_name: str, frames: dict[str, pd.DataFrame]) -> LegacyCube:
+    ports = list(frames.keys())
+    # union of numeric fields we care about, keep deterministic order
+    present = []
+    for f in NUMERIC_FIELDS_CANON + ["Time_s"]:
+        if any((f in df.columns) or (f == "Time_s" and "Time" in df.columns) for df in frames.values()):
+            present.append(f)
+    fields = present or NUMERIC_FIELDS_CANON  # never empty
+    counts = np.array([len(frames[p]) for p in ports], dtype=int)
+    Nmax = int(counts.max()) if len(counts) else 0
+    F = len(fields)
+    cube = np.full((len(ports), Nmax, F), np.nan, dtype=float)
+    for i, p in enumerate(ports):
+        df = frames[p].copy()
+        if "Time_s" in fields and "Time_s" not in df.columns:
+            df["Time_s"] = _to_time_s(df)
+        for k, col in enumerate(fields):
+            if col in df.columns:
+                vals = pd.to_numeric(df[col], errors="coerce").to_numpy()
+                n = min(len(vals), Nmax)
+                cube[i, :n, k] = vals[:n]
+    return LegacyCube(ports=ports, fields=fields, data=cube, counts=counts, workbook=workbook_name)
+
+def parse_legacy_workbook(
+    xlsx_path: Path,
+    out_dir: Path | None = None,
+    piccolo_flat_threshold: float = 1e-6,
+    return_mode: str = "files",  # "files" | "frames" | "array"
+):
+    """
+    Parse legacy workbooks.
+    - files  -> writes CSVs + summary.json (backward compatible), returns summary dict
+    - frames -> returns (frames: dict[port->DataFrame], summary dict)
+    - array  -> returns (cube: LegacyCube, summary dict)
+    """
     xlsx_path = Path(xlsx_path)
-    out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+    if return_mode == "files":
+        assert out_dir is not None, "out_dir is required when return_mode='files'"
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
     try:
         xl = pd.ExcelFile(xlsx_path)
     except ImportError as exc:  # pragma: no cover - depends on optional deps
-        raise ImportError(
-            "Unable to open workbook. For .xls files install the 'xlrd' package"
-        ) from exc
+        raise ImportError("Unable to open workbook. For .xls files install 'xlrd'.") from exc
     results: List[SheetParseResult] = []
+    frames: dict[str, pd.DataFrame] = {}
 
     for sheet in xl.sheet_names:
         try:
@@ -128,7 +195,9 @@ def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold
                 out.insert(0, "Sample", range(1, len(out)+1))
                 out["Workbook"] = xlsx_path.name
                 out["Sheet"] = sheet
-                m = re.search(r"(\.\d+)$", sheet); out["Replicate"] = m.group(1) if m else ""
+                m = re.search(r"(\.\d+)$", sheet)
+                replicate = m.group(1) if m else None
+                out["Replicate"] = replicate or ""
 
                 if "Piccolo" in out.columns:
                     v = out["Piccolo"].to_numpy(float)
@@ -138,20 +207,37 @@ def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold
                 if missing:
                     notes = f"missing required columns: {', '.join(missing)}"
 
-                csv_path = out_dir / f"{xlsx_path.stem}__{re.sub(r'[^A-Za-z0-9_.-]+','_', sheet)}.csv"
-                out.to_csv(csv_path, index=False)
-                results.append(
-                    SheetParseResult(
-                        sheet=sheet,
-                        replicate=(m.group(1) if m else None),
-                        csv_path=str(csv_path),
-                        n_rows=int(len(out)),
-                        n_cols=int(out.shape[1]),
-                        piccolo_flat=piccolo_flat,
-                        mode="vertical",
-                        notes=notes,
+                port_key = sheet if replicate is None else f"{sheet}__{replicate}"
+                frames[port_key] = out
+
+                if return_mode == "files":
+                    csv_path = Path(out_dir) / f"{xlsx_path.stem}__{re.sub(r'[^A-Za-z0-9_.-]+','_', port_key)}.csv"
+                    out.to_csv(csv_path, index=False)
+                    results.append(
+                        SheetParseResult(
+                            sheet=sheet,
+                            replicate=replicate,
+                            csv_path=str(csv_path),
+                            n_rows=int(len(out)),
+                            n_cols=int(out.shape[1]),
+                            piccolo_flat=piccolo_flat,
+                            mode="vertical",
+                            notes=notes,
+                        )
                     )
-                )
+                else:
+                    results.append(
+                        SheetParseResult(
+                            sheet=sheet,
+                            replicate=replicate,
+                            csv_path=None,
+                            n_rows=int(len(out)),
+                            n_cols=int(out.shape[1]),
+                            piccolo_flat=piccolo_flat,
+                            mode="vertical",
+                            notes=notes,
+                        )
+                    )
                 continue
 
             else:
@@ -216,32 +302,67 @@ def parse_legacy_workbook(xlsx_path: Path, out_dir: Path, piccolo_flat_threshold
                     if missing:
                         note = f"missing required columns: {', '.join(missing)}"
 
-                    csv_path = out_dir / f"{xlsx_path.stem}__{re.sub(r'[^A-Za-z0-9_.-]+','_', sheet)}.csv"
-                    out.to_csv(csv_path, index=False)
-                    results.append(
-                        SheetParseResult(
-                            sheet=sheet,
-                            replicate=None,
-                            csv_path=str(csv_path),
-                            n_rows=int(len(out)),
-                            n_cols=int(out.shape[1]),
-                            piccolo_flat=piccolo_flat,
-                            mode="multiport",
-                            notes=note,
+                    port_key = sheet
+                    frames[port_key] = out
+
+                    if return_mode == "files":
+                        csv_path = Path(out_dir) / f"{xlsx_path.stem}__{re.sub(r'[^A-Za-z0-9_.-]+','_', port_key)}.csv"
+                        out.to_csv(csv_path, index=False)
+                        results.append(
+                            SheetParseResult(
+                                sheet=sheet,
+                                replicate=None,
+                                csv_path=str(csv_path),
+                                n_rows=int(len(out)),
+                                n_cols=int(out.shape[1]),
+                                piccolo_flat=piccolo_flat,
+                                mode="multiport",
+                                notes=note,
+                            )
                         )
-                    )
+                    else:
+                        results.append(
+                            SheetParseResult(
+                                sheet=sheet,
+                                replicate=None,
+                                csv_path=None,
+                                n_rows=int(len(out)),
+                                n_cols=int(out.shape[1]),
+                                piccolo_flat=piccolo_flat,
+                                mode="multiport",
+                                notes=note,
+                            )
+                        )
                     continue
 
         # Fallback: minimal CSV
         out = pd.DataFrame({"Sample": range(1, len(raw)+1)})
         out["Workbook"] = xlsx_path.name; out["Sheet"] = sheet; out["Replicate"] = ""
-        csv_path = out_dir / f"{xlsx_path.stem}__{re.sub(r'[^A-Za-z0-9_.-]+','_', sheet)}.csv"
-        out.to_csv(csv_path, index=False)
-        results.append(SheetParseResult(sheet=sheet, replicate=None, csv_path=str(csv_path),
-                                        n_rows=int(len(out)), n_cols=int(out.shape[1]),
-                                        piccolo_flat=False, mode="fallback", notes="no recognizable headers"))
+        port_key = sheet
+        frames[port_key] = out
+        if return_mode == "files":
+            csv_path = Path(out_dir) / f"{xlsx_path.stem}__{re.sub(r'[^A-Za-z0-9_.-]+','_', port_key)}.csv"
+            out.to_csv(csv_path, index=False)
+            results.append(SheetParseResult(sheet=sheet, replicate=None, csv_path=str(csv_path),
+                                            n_rows=int(len(out)), n_cols=int(out.shape[1]),
+                                            piccolo_flat=False, mode="fallback", notes="no recognizable headers"))
+        else:
+            results.append(SheetParseResult(sheet=sheet, replicate=None, csv_path=None,
+                                            n_rows=int(len(out)), n_cols=int(out.shape[1]),
+                                            piccolo_flat=False, mode="fallback", notes="no recognizable headers"))
 
     summary = {"workbook": xlsx_path.name, "sheets": [asdict(r) for r in results]}
-    with open(out_dir / f"{xlsx_path.stem}__parse_summary.json", "w") as f:
-        json.dump(summary, f, indent=2, default=str)
-    return summary
+
+    if return_mode == "files":
+        with open(Path(out_dir) / f"{xlsx_path.stem}__parse_summary.json", "w") as f:
+            json.dump(summary, f, indent=2, default=str)
+        return summary
+
+    if return_mode == "frames":
+        return frames, summary
+
+    if return_mode == "array":
+        cube = _frames_to_cube(xlsx_path.name, frames)
+        return cube, summary
+
+    raise ValueError(f"Unknown return_mode={return_mode!r}")
