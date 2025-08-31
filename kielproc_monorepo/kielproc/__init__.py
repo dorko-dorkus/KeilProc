@@ -3,15 +3,7 @@
 kielproc - Kiel + wall-static baseline processor & legacy piccolo translation.
 """
 
-try:  # pragma: no cover - version lookup is trivial
-    from importlib.metadata import PackageNotFoundError, version
-except ImportError:  # pragma: no cover
-    from importlib_metadata import PackageNotFoundError, version
-
-try:  # pragma: no cover
-    __version__ = version("kielproc-suite")
-except PackageNotFoundError:  # pragma: no cover
-    __version__ = "0.0.0"
+__version__ = "0.1.0"
 
 from .physics import map_qs_to_qt, venturi_dp_from_qt, rho_from_pT
 from .lag import estimate_lag_xcorr, shift_series, advance_series, delay_series
