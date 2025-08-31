@@ -3,7 +3,7 @@ import numpy as np
 from kielproc.physics import map_qs_to_qt, venturi_dp_from_qt
 from kielproc.lag import advance_series, delay_series
 from kielproc.deming import deming_fit
-from kielproc.pooling import pool_alpha_beta_random_effects
+from kielproc.pooling import pool_alpha_beta_random_effects, pool_alpha_beta_gls
 
 def test_map_and_venturi():
     qs = np.array([10.0, 20.0, 30.0])
@@ -41,3 +41,30 @@ def test_pooling_workflow():
     assert a_se > 0
     assert cov.shape == (2, 2)
     assert cov[0, 1] > 0
+
+
+def test_pooling_gls():
+    alphas = np.array([0.9, 1.1, 1.0])
+    betas = np.array([2.0, 1.0, 1.5])
+    covs = np.array(
+        [
+            [[0.01, 0.02], [0.02, 0.5]],
+            [[0.01, 0.01], [0.01, 0.5]],
+            [[0.02, 0.015], [0.015, 0.6]],
+        ]
+    )
+
+    a_hat, a_se, b_hat, b_se, cov = pool_alpha_beta_gls(alphas, betas, covs)
+
+    Sum_W = np.zeros((2, 2))
+    Sum_Wtheta = np.zeros(2)
+    for a, b, C in zip(alphas, betas, covs):
+        W = np.linalg.inv(C)
+        Sum_W += W
+        Sum_Wtheta += W @ np.array([a, b])
+    cov_exp = np.linalg.inv(Sum_W)
+    pooled_exp = cov_exp @ Sum_Wtheta
+
+    assert np.allclose([a_hat, b_hat], pooled_exp)
+    assert np.allclose(cov, cov_exp)
+    assert a_se > 0 and b_se > 0
