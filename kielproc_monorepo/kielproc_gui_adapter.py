@@ -11,6 +11,7 @@ from kielproc.physics import map_qs_to_qt, venturi_dp_from_qt
 from kielproc.translate import compute_translation_table, apply_translation
 from kielproc.lag import shift_series, first_order_lag
 from kielproc.report import write_summary_tables, plot_alignment
+from kielproc.qa import qa_indices, DEFAULT_DELTA_OPP_MAX, DEFAULT_W_MAX
 
 def map_verification_plane(csv_path: Path, qs_col: str, r: float, beta: float, sampling_hz: float|None, out_path: Path) -> Path:
     df = pd.read_csv(csv_path)
@@ -38,8 +39,8 @@ def fit_alpha_beta(
     pE_col: str = "pE",
     pW_col: str = "pW",
     q_mean_col: str = "q_mean",
-    qa_gate_opp: float | None = None,
-    qa_gate_w: float | None = None,
+    qa_gate_opp: float | None = DEFAULT_DELTA_OPP_MAX,
+    qa_gate_w: float | None = DEFAULT_W_MAX,
 ) -> Dict[str, object]:
     blocks = {name: pd.read_csv(path) for name, path in block_specs.items()}
     per_block, pooled = compute_translation_table(
@@ -51,7 +52,6 @@ def fit_alpha_beta(
     )
 
     # QA indices similar to CLI
-    from kielproc.qa import qa_indices
     qa_rows = []
     for name, df in blocks.items():
         pN = df[pN_col].mean()
