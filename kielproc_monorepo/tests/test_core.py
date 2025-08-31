@@ -1,35 +1,29 @@
 import numpy as np
-from duct_dp_visualizer import pearson_r, fisher_z_ci, theil_sen_subsample_ci, SliceParams, analyze_port
 import pandas as pd
 
-def test_pearson_and_fisher_ci():
-    # perfect positive
-    x = np.arange(100, dtype=float)
-    y = 2*x + 1
-    r = pearson_r(x,y)
-    assert r > 0.999
-    rc, lo, hi = fisher_z_ci(r, len(x))
-    assert np.isnan(lo) or lo <= rc <= hi
+from kielproc.geometry import DiffuserGeometry, infer_geometry_from_table
 
-def test_theil_sen_near_true_slope():
-    rng = np.random.default_rng(0)
-    x = np.linspace(0,10,200)
-    y = 3.0*x + 0.5 + rng.normal(0, 0.3, size=x.size)
-    m, lo, hi = theil_sen_subsample_ci(x,y,B=100,pairs_per_boot=200,seed=1)
-    assert 2.5 < m < 3.5
-    assert lo < m < hi
 
-def test_analyze_port_slices():
-    # Build a DF with a known sign flip: bottom slope negative, top positive
-    n = 200
-    x = np.linspace(-1, 1, n)
-    y = np.concatenate([ -2*x[:30] + 0.1*np.random.randn(30),
-                          0.1*np.random.randn(140),
-                          2*x[-30:] + 0.1*np.random.randn(30)])
-    df = pd.DataFrame({"SP": x, "VP": y})
-    tidy = analyze_port(df, SliceParams(frac=0.15, kmin=10))
-    assert set(tidy["Slice"]) == {"bottom","middle","top"}
-    # Expect bottom and top slopes of opposite sign
-    b = float(tidy.loc[tidy["Slice"]=="bottom","theil_sen"])
-    t = float(tidy.loc[tidy["Slice"]=="top","theil_sen"])
-    assert b*t < 0
+def test_radius_at_linear_cone():
+    geo = DiffuserGeometry(D1=0.1, D2=0.2, L=1.0)
+    z = np.array([0.0, 0.5, 1.0])
+    expected = np.array([0.05, 0.075, 0.1])
+    assert np.allclose(geo.radius_at(z), expected)
+
+
+def test_infer_geometry_converts_mm_to_m():
+    df = pd.DataFrame({
+        "D1": [100],  # mm
+        "D2": [200],  # mm
+        "L": [1000],  # mm
+        "r": [1.5],
+        "dt": [60],
+    })
+    geo = infer_geometry_from_table(df)
+    assert geo is not None
+    assert np.isclose(geo.D1, 0.1)
+    assert np.isclose(geo.D2, 0.2)
+    assert np.isclose(geo.L, 1.0)
+    assert np.isclose(geo.dt, 0.06)
+    assert np.isclose(geo.r_As_At, 1.5)
+
