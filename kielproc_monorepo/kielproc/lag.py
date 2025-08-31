@@ -52,6 +52,25 @@ def shift_series(y: np.ndarray, lag: int):
     return out
 
 
+def advance_series(y: np.ndarray, n: int):
+    """Advance series by ``n`` samples (shift left).
+
+    Equivalent to ``shift_series(y, -n)``.  Useful when a positive lag from
+    :func:`estimate_lag_xcorr` indicates that ``y`` lags the reference and thus
+    should be advanced to align with it.
+    """
+    return shift_series(y, -int(n))
+
+
+def delay_series(y: np.ndarray, n: int):
+    """Delay series by ``n`` samples (shift right).
+
+    Equivalent to ``shift_series(y, n)``.  Provided for symmetry with
+    :func:`advance_series`.
+    """
+    return shift_series(y, int(n))
+
+
 def first_order_lag(x: np.ndarray, tau_s: float, dt_s: float):
     """
     Apply discrete first-order lag filter with time constant tau_s, sample interval dt_s.
