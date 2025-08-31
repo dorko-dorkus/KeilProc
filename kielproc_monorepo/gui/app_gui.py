@@ -10,8 +10,9 @@ Integrated GUI for Kiel + Wall-Static Baseline & Legacy Translation
 import sys
 import traceback
 from pathlib import Path
+import math
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 
 # Ensure repo root is importable when running as "python gui/app_gui.py"
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,14 @@ from kielproc_gui_adapter import (
     generate_flow_map_from_csv, generate_polar_slice_from_csv
 )
 from kielproc.qa import DEFAULT_W_MAX, DEFAULT_DELTA_OPP_MAX
+from kielproc.geometry import (
+    Geometry,
+    plane_area,
+    throat_area,
+    effective_upstream_area,
+    r_ratio,
+    beta_from_geometry,
+)
 
 class App(tk.Tk):
     def __init__(self):
@@ -68,15 +77,61 @@ class App(tk.Tk):
         ttk.Label(frm, text="(or) qs column").grid(row=row, column=0, sticky="e", **pad)
         ttk.Entry(frm, textvariable=self.var_qs_col, width=20).grid(row=row, column=1, sticky="w", **pad); row+=1
 
-        self.var_r = tk.DoubleVar(value=1.10)
-        self.var_beta = tk.DoubleVar(value=0.55)
+        # Geometry inputs
+        self.var_height = tk.DoubleVar(value=1.0)
+        self.var_width = tk.DoubleVar(value=2.3)
+        self.var_dt = tk.DoubleVar(value=0.0)
+        self.var_at = tk.DoubleVar(value=0.0)
+        self.var_A1 = tk.DoubleVar(value=0.0)
+        self.var_use_plane = tk.BooleanVar(value=True)
+        self.var_rho = tk.DoubleVar(value=0.7)
+
+        self.var_As = tk.StringVar()
+        self.var_At = tk.StringVar()
+        self.var_r_geom = tk.StringVar()
+        self.var_beta_geom = tk.StringVar()
+        self.var_D1 = tk.StringVar()
+
+        for v in [self.var_height, self.var_width, self.var_dt, self.var_at, self.var_A1, self.var_use_plane]:
+            v.trace_add('write', lambda *args: self._update_geometry())
+
+        ttk.Label(frm, text="Duct height [m]").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_height, width=10).grid(row=row, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="Duct width [m]").grid(row=row, column=2, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_width, width=10).grid(row=row, column=3, sticky="w", **pad); row+=1
+
+        ttk.Label(frm, text="Throat dia [m]").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_dt, width=10).grid(row=row, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="Throat area [m²]").grid(row=row, column=2, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_at, width=10).grid(row=row, column=3, sticky="w", **pad); row+=1
+
+        ttk.Checkbutton(frm, text="Use plane area for beta (A1 = As)", variable=self.var_use_plane, command=self._update_geometry).grid(row=row, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Label(frm, text="Upstream area A1 [m²]").grid(row=row, column=2, sticky="e", **pad)
+        self.ent_A1 = ttk.Entry(frm, textvariable=self.var_A1, width=10)
+        self.ent_A1.grid(row=row, column=3, sticky="w", **pad); row+=1
+
+        ttk.Label(frm, text="ρ default [kg/m³]").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_rho, width=10).grid(row=row, column=1, sticky="w", **pad); row+=1
+
+        ttk.Label(frm, text="As [m²]").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_As, width=10, state="readonly").grid(row=row, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="At [m²]").grid(row=row, column=2, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_At, width=10, state="readonly").grid(row=row, column=3, sticky="w", **pad); row+=1
+
+        ttk.Label(frm, text="r = As/At").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_r_geom, width=10, state="readonly").grid(row=row, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="beta").grid(row=row, column=2, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_beta_geom, width=10, state="readonly").grid(row=row, column=3, sticky="w", **pad); row+=1
+
+        ttk.Label(frm, text="D1 equiv [m]").grid(row=row, column=0, sticky="e", **pad)
+        self.ent_D1 = ttk.Entry(frm, textvariable=self.var_D1, width=10, state="readonly")
+        self.ent_D1.grid(row=row, column=1, sticky="w", **pad); row+=1
+
+        self._update_geometry()
+
         self.var_fs = tk.DoubleVar(value=10.0)
         self.var_outdir = tk.StringVar(value=str(Path.cwd()/ "outputs"))
 
-        ttk.Label(frm, text="r = As/At").grid(row=row, column=0, sticky="e", **pad)
-        ttk.Entry(frm, textvariable=self.var_r, width=10).grid(row=row, column=1, sticky="w", **pad)
-        ttk.Label(frm, text="beta = dt/D1").grid(row=row, column=2, sticky="e", **pad)
-        ttk.Entry(frm, textvariable=self.var_beta, width=10).grid(row=row, column=3, sticky="w", **pad); row+=1
         ttk.Label(frm, text="Sampling (Hz)").grid(row=row, column=0, sticky="e", **pad)
         ttk.Entry(frm, textvariable=self.var_fs, width=10).grid(row=row, column=1, sticky="w", **pad)
         ttk.Label(frm, text="Output dir").grid(row=row, column=2, sticky="e", **pad)
@@ -190,26 +245,121 @@ class App(tk.Tk):
     def log(self, msg):
         self.txt.insert("end", str(msg)+"\n"); self.txt.see("end")
 
+    # Geometry helpers
+    def _fmt(self, val):
+        try:
+            return f"{val:.3g}"
+        except Exception:
+            return ""
+
+    def _update_geometry(self, *args):
+        try:
+            h = float(self.var_height.get())
+            w = float(self.var_width.get())
+        except Exception:
+            return
+        As = h * w
+        self.var_As.set(self._fmt(As))
+        if self.var_use_plane.get():
+            self.ent_A1.configure(state="disabled")
+            self.var_A1.set(As)
+            A1 = As
+        else:
+            self.ent_A1.configure(state="normal")
+            try:
+                A1 = float(self.var_A1.get())
+            except Exception:
+                A1 = None
+        At = None
+        try:
+            dt = float(self.var_dt.get())
+            if dt > 0:
+                At = math.pi * (dt ** 2) / 4
+        except Exception:
+            pass
+        try:
+            at_in = float(self.var_at.get())
+            if at_in > 0:
+                if At is None or abs(at_in - At) / At <= 0.005:
+                    At = at_in
+        except Exception:
+            pass
+        if At is not None:
+            self.var_At.set(self._fmt(At))
+            if A1 is None:
+                beta = float("nan")
+                r = float("nan")
+            else:
+                r = As / At
+                beta = math.sqrt(At / A1)
+            self.var_r_geom.set(self._fmt(r))
+            self.var_beta_geom.set(self._fmt(beta))
+        else:
+            self.var_At.set("")
+            self.var_r_geom.set("")
+            self.var_beta_geom.set("")
+        if not self.var_use_plane.get() and A1 is not None:
+            D1 = math.sqrt(4 * A1 / math.pi)
+            self.var_D1.set(self._fmt(D1))
+        else:
+            self.var_D1.set("")
+
+    def _get_geometry(self) -> Geometry:
+        dt = float(self.var_dt.get()) if self.var_dt.get() else None
+        at = float(self.var_at.get()) if self.var_at.get() else None
+        if dt and at:
+            At_dt = math.pi * (dt ** 2) / 4
+            if abs(At_dt - at) / At_dt > 0.005:
+                raise ValueError("Throat diameter and area mismatch >0.5%")
+            at = At_dt  # favor diameter
+        if dt is None and at is None:
+            raise ValueError("Provide throat diameter or area")
+        A1 = None if self.var_use_plane.get() else (float(self.var_A1.get()) if self.var_A1.get() else None)
+        g = Geometry(
+            duct_height_m=float(self.var_height.get()),
+            duct_width_m=float(self.var_width.get()),
+            upstream_area_m2=A1,
+            throat_diameter_m=dt if dt else None,
+            throat_area_m2=at if at and (dt is None) else None,
+            rho_default_kg_m3=float(self.var_rho.get()),
+        )
+        As = plane_area(g)
+        At = throat_area(g)
+        A1_eff = effective_upstream_area(g)
+        warn = []
+        if At >= As:
+            warn.append("At >= As")
+        if At >= A1_eff:
+            warn.append("At >= A1")
+        if warn:
+            msg = ", ".join(warn) + ". Continue?"
+            if not messagebox.askokcancel("Geometry warning", msg):
+                raise RuntimeError("Mapping aborted by user")
+        return g
+
     # Handlers
     def _do_map(self):
         try:
+            geom = self._get_geometry()
             outdir = Path(self.var_outdir.get()); outdir.mkdir(parents=True, exist_ok=True)
             out = outdir/"mapped_ref.csv"
+            fs = float(self.var_fs.get()) if self.var_fs.get() > 0 else None
             if self.var_use_tot_stat.get():
                 mapped = map_from_tot_and_static(
                     Path(self.var_qs_csv.get()),
                     self.var_tot_col.get(),
                     self.var_ps_col_avg.get(),
-                    float(self.var_r.get()), float(self.var_beta.get()),
-                    float(self.var_fs.get()) if self.var_fs.get()>0 else None,
-                    out
+                    geom,
+                    fs,
+                    out,
                 )
             else:
                 mapped = map_verification_plane(
-                    Path(self.var_qs_csv.get()), self.var_qs_col.get(),
-                    float(self.var_r.get()), float(self.var_beta.get()),
-                    float(self.var_fs.get()) if self.var_fs.get()>0 else None,
-                    out
+                    Path(self.var_qs_csv.get()),
+                    self.var_qs_col.get(),
+                    geom,
+                    fs,
+                    out,
                 )
             self.log(f"[OK] Wrote {mapped}")
         except Exception as e:

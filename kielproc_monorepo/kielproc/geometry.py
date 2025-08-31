@@ -41,6 +41,29 @@ def beta_from_geometry(g: Geometry) -> float:
     At = throat_area(g)
     return math.sqrt(At / A1)
 
+
+def geometry_summary(g: Geometry) -> dict:
+    """Return a dictionary of key geometric parameters.
+
+    Values are computed at full precision; callers may format for
+    display without altering the stored float values.
+    """
+    As = plane_area(g)
+    At = throat_area(g)
+    A1 = effective_upstream_area(g)
+    return {
+        "duct_height_m": g.duct_height_m,
+        "duct_width_m": g.duct_width_m,
+        "As_m2": As,
+        "upstream_area_m2": g.upstream_area_m2,
+        "A1_m2": A1,
+        "At_m2": At,
+        "r": r_ratio(g),
+        "beta": beta_from_geometry(g),
+        "rho_default_kg_m3": g.rho_default_kg_m3,
+        "A1_auto_from_As": g.upstream_area_m2 is None,
+    }
+
 @dataclass
 class DiffuserGeometry:
     D1: float  # inlet diameter [m]

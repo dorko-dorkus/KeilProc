@@ -17,6 +17,7 @@ from .geometry import (
     throat_area,
     r_ratio,
     beta_from_geometry,
+    geometry_summary,
 )
 
 __all__ = [
@@ -27,5 +28,5 @@ __all__ = [
     "load_legacy_excel", "load_logger_csv", "unify_schema",
     "compute_translation_table", "apply_translation",
     "write_summary_tables", "plot_alignment", "qa_indices",
-    "Geometry", "plane_area", "effective_upstream_area", "throat_area", "r_ratio", "beta_from_geometry",
+    "Geometry", "plane_area", "effective_upstream_area", "throat_area", "r_ratio", "beta_from_geometry", "geometry_summary",
 ]

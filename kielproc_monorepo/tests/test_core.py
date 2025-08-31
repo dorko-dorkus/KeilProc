@@ -13,6 +13,7 @@ from kielproc.geometry import (
     throat_area,
     r_ratio,
     beta_from_geometry,
+    geometry_summary,
 )
 
 
@@ -74,4 +75,28 @@ def test_throat_area_requires_input():
     g = Geometry()
     with pytest.raises(ValueError):
         throat_area(g)
+
+
+from kielproc_gui_adapter import map_verification_plane
+
+
+def test_map_verification_plane_persists_geometry(tmp_path):
+    df = pd.DataFrame({"qs": [10.0, 20.0]})
+    inp = tmp_path / "in.csv"
+    df.to_csv(inp, index=False)
+    g = Geometry(duct_height_m=1.0, duct_width_m=2.0, throat_diameter_m=1.0)
+    out = tmp_path / "out.csv"
+    map_verification_plane(inp, "qs", g, None, out)
+    res = pd.read_csv(out)
+    r = r_ratio(g)
+    beta = beta_from_geometry(g)
+    qt_exp = (r ** 2) * df["qs"]
+    dp_exp = (1 - beta ** 4) * qt_exp
+    assert np.allclose(res["qt"], qt_exp)
+    assert np.allclose(res["dp_vent"], dp_exp)
+    assert np.isclose(res["r"].iloc[0], r)
+    assert np.isclose(res["beta"].iloc[0], beta)
+    assert np.isclose(res["As_m2"].iloc[0], plane_area(g))
+    assert np.isclose(res["At_m2"].iloc[0], throat_area(g))
+    assert res["A1_auto_from_As"].iloc[0]
 
