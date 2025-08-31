@@ -22,7 +22,10 @@ class LegacyCube:
         P, N, F = self.data.shape
         idx = pd.MultiIndex.from_product([self.ports, range(N)], names=["Port", "Sample"])
         df = pd.DataFrame(self.data.reshape(P * N, F), index=idx, columns=self.fields)
-        mask = np.concatenate([np.r_[True] * c + np.r_[False] * (N - c) for c in self.counts])
+        # ``data`` is padded with NaN rows so that each port has the same
+        # number of samples ``N``.  Build a boolean mask that keeps only the
+        # first ``count`` samples for each port and drops the padding rows.
+        mask = np.concatenate([np.arange(N) < c for c in self.counts])
         return df[mask]
 
 # Columns expected in every parsed sheet.  These are used to validate
