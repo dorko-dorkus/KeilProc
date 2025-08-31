@@ -1,0 +1,21 @@
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kielproc-suite"
+version = "0.1.0"
+description = "Kiel + wall-static baseline and legacy piccolo translation, with Tk GUI"
+authors = [{name="Brandon's helper"}]
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "matplotlib>=3.8",
+    "openpyxl>=3.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kielproc*"]
+exclude = []
