@@ -141,3 +141,58 @@ def plot_polar_slice_wall(outdir: Path, theta_deg, values, R: float = 1.0, band:
     fig.savefig(p, dpi=150)
     plt.close(fig)
     return str(p)
+
+def plot_wall_static_deviation_heatmap(outdir: Path, df: pd.DataFrame,
+                                       theta_col: str, plane_col: str,
+                                       ps_col: str, agg: str = "median",
+                                       cmap: str = "bwr", title: str = "Wall static deviation heatmap",
+                                       stem: str = "wall_static_deviation", norm_by=None):
+    """Plot a legacy wall-static deviation heatmap.
+
+    This computes the circumferential deviation of ``ps_col`` for each axial
+    plane and renders it as a θ–z map with a diverging colour scale so the
+    floor/roof sign is immediately visible.  Inputs must already be aligned
+    according to the sample-based lag convention used elsewhere in the
+    processing pipeline.
+    """
+    planes, thetas, dev = compute_circumferential_static_deviation(
+        df, theta_col, plane_col, ps_col, agg=agg
+    )
+    V = dev.copy()
+    if norm_by not in (None, 0):
+        V = V / float(norm_by)
+    vmax = np.nanmax(np.abs(V))
+    vmax = 1.0 if not np.isfinite(vmax) or vmax == 0 else vmax
+    outdir.mkdir(parents=True, exist_ok=True)
+    fig = plt.figure(figsize=(10, 4.2))
+    extent = [planes.min(), planes.max(), thetas.min(), thetas.max()]
+    plt.imshow(V, aspect="auto", origin="lower", extent=extent,
+               cmap=cmap, vmin=-vmax, vmax=vmax)
+    label = "Δps" + (" (normalized)" if norm_by else "")
+    plt.colorbar(label=label)
+    plt.xlabel("Axial plane")
+    plt.ylabel("Circumferential angle θ (deg)")
+    plt.title(title)
+    p = outdir / f"{stem}.png"
+    fig.tight_layout()
+    fig.savefig(p, dpi=150)
+    plt.close(fig)
+    return str(p)
+
+def plot_diffuser_anchored_map(outdir: Path, z_m, theta_deg, values,
+                               physics_idx: int, geom=None, cmap=None,
+                               title: str = "Diffuser anchored map",
+                               stem: str = "diffuser_anchored", norm_by=None):
+    """Render a diffuser-anchored flow map for the new rig.
+
+    ``values`` must be a ``(len(theta), len(z))`` array.  The row indexed by
+    ``physics_idx`` provides the co-planar physics channel used to anchor the
+    map; it is subtracted from all other rows before rendering.
+    """
+    V = np.asarray(values, dtype=float)
+    if physics_idx < 0 or physics_idx >= V.shape[0]:
+        raise IndexError("physics_idx out of range")
+    anchored = V - V[physics_idx:physics_idx+1, :]
+    return plot_flow_map_unwrapped(outdir, z_m, theta_deg, anchored,
+                                   geom=geom, cmap=cmap, title=title,
+                                   stem=stem, norm_by=norm_by)

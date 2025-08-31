@@ -2,7 +2,7 @@
 import numpy as np
 from kielproc.physics import map_qs_to_qt, venturi_dp_from_qt
 from kielproc.lag import advance_series, delay_series
-from kielproc.deming import deming_fit
+from kielproc.deming import deming_fit, jackknife_deming
 from kielproc.pooling import pool_alpha_beta_random_effects
 
 def test_map_and_venturi():
@@ -28,6 +28,19 @@ def test_deming_known_slope():
     a, b, sa, sb = deming_fit(x_noisy, y_noisy, lambda_ratio=1.0)
     assert 1.6 < a < 2.4
     assert sa >= 0.0
+
+
+def test_jackknife_deming():
+    rng = np.random.default_rng(0)
+    x = np.linspace(0, 10, 50)
+    y_true = 3.0 * x - 2.0
+    x_noisy = x + rng.normal(scale=0.1, size=x.size)
+    y_noisy = y_true + rng.normal(scale=0.1, size=x.size)
+    a, b, sa, sb, cab = jackknife_deming(x_noisy, y_noisy, lambda_ratio=1.0)
+    assert 2.5 < a < 3.5
+    assert sa > 0
+    assert sb > 0
+    assert np.isfinite(cab)
 
 def test_pooling_workflow():
     alphas = np.array([0.9, 1.1, 1.0])

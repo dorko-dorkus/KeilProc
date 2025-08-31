@@ -4,18 +4,24 @@ kielproc - Kiel + wall-static baseline processor & legacy piccolo translation.
 """
 from .physics import map_qs_to_qt, venturi_dp_from_qt, rho_from_pT
 from .lag import estimate_lag_xcorr, shift_series, advance_series, delay_series
-from .deming import deming_fit
+from .deming import deming_fit, jackknife_deming
 from .pooling import pool_alpha_beta_random_effects
 from .io import load_legacy_excel, load_logger_csv, unify_schema
 from .translate import compute_translation_table, apply_translation
-from .report import write_summary_tables, plot_alignment
+from .report import (
+    write_summary_tables,
+    plot_alignment,
+    plot_wall_static_deviation_heatmap,
+    plot_diffuser_anchored_map,
+)
 
 __all__ = [
     "map_qs_to_qt", "venturi_dp_from_qt", "rho_from_pT",
     "estimate_lag_xcorr", "shift_series", "advance_series", "delay_series",
-    "deming_fit",
+    "deming_fit", "jackknife_deming",
     "pool_alpha_beta_random_effects",
     "load_legacy_excel", "load_logger_csv", "unify_schema",
     "compute_translation_table", "apply_translation",
     "write_summary_tables", "plot_alignment",
+    "plot_wall_static_deviation_heatmap", "plot_diffuser_anchored_map",
 ]
