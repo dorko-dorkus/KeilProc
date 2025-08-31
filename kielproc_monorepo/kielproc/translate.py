@@ -25,9 +25,12 @@ def compute_translation_table(blocks: dict, ref_key="mapped_ref", picc_key="picc
     if not tidy.empty and tidy["alpha_se"].gt(0).all() and tidy["beta_se"].gt(0).all():
         Va = tidy["alpha_se"]**2
         Vb = tidy["beta_se"]**2
-        a_hat, a_se, tau2_a, b_hat, b_se, tau2_b, Q_a, Q_b = pool_alpha_beta_random_effects(tidy["alpha"], Va, tidy["beta"], Vb)
+        cov_ab = np.zeros_like(Va)
+        a_hat, a_se, tau2_a, b_hat, b_se, tau2_b, Q_a, Q_b, cov_pooled = \
+            pool_alpha_beta_random_effects(tidy["alpha"], Va, tidy["beta"], Vb, cov_ab)
         pooled = dict(alpha=a_hat, alpha_se=a_se, tau2_alpha=tau2_a,
                       beta=b_hat,  beta_se=b_se,  tau2_beta=tau2_b,
+                      cov_ab=cov_pooled[0, 1],
                       Q_alpha=Q_a[0], k_alpha=Q_a[1], Q_beta=Q_b[0], k_beta=Q_b[1])
     return tidy.reset_index(), pooled
 
