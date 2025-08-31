@@ -1,11 +1,18 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from kielproc.geometry import (
     DiffuserGeometry,
     infer_geometry_from_table,
     planes_to_z,
     plane_value_to_z,
+    Geometry,
+    plane_area,
+    effective_upstream_area,
+    throat_area,
+    r_ratio,
+    beta_from_geometry,
 )
 
 
@@ -41,4 +48,30 @@ def test_planes_to_z_maps_indices_to_length():
     # single plane value interpolation
     z_val = plane_value_to_z(2, planes, geo)
     assert np.isclose(z_val, 0.8)
+
+
+def test_beta_from_geometry_defaults_to_plane_area():
+    g = Geometry(duct_height_m=2.0, duct_width_m=3.0, throat_diameter_m=1.0)
+    beta = beta_from_geometry(g)
+    expected = np.sqrt(throat_area(g) / plane_area(g))
+    assert np.isclose(beta, expected)
+    assert np.isclose(r_ratio(g), plane_area(g) / throat_area(g))
+
+
+def test_beta_from_geometry_with_upstream_area():
+    g = Geometry(
+        duct_height_m=2.0,
+        duct_width_m=3.0,
+        upstream_area_m2=10.0,
+        throat_area_m2=2.0,
+    )
+    beta = beta_from_geometry(g)
+    assert np.isclose(beta, np.sqrt(2.0 / 10.0))
+    assert np.isclose(effective_upstream_area(g), 10.0)
+
+
+def test_throat_area_requires_input():
+    g = Geometry()
+    with pytest.raises(ValueError):
+        throat_area(g)
 

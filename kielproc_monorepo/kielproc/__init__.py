@@ -10,6 +10,14 @@ from .io import load_legacy_excel, load_logger_csv, unify_schema
 from .translate import compute_translation_table, apply_translation
 from .report import write_summary_tables, plot_alignment
 from .qa import qa_indices
+from .geometry import (
+    Geometry,
+    plane_area,
+    effective_upstream_area,
+    throat_area,
+    r_ratio,
+    beta_from_geometry,
+)
 
 __all__ = [
     "map_qs_to_qt", "venturi_dp_from_qt", "rho_from_pT",
@@ -19,4 +27,5 @@ __all__ = [
     "load_legacy_excel", "load_logger_csv", "unify_schema",
     "compute_translation_table", "apply_translation",
     "write_summary_tables", "plot_alignment", "qa_indices",
+    "Geometry", "plane_area", "effective_upstream_area", "throat_area", "r_ratio", "beta_from_geometry",
 ]
