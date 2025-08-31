@@ -54,7 +54,37 @@ def compute_translation_table(
                       Q_alpha=Q_a[0], k_alpha=Q_a[1], Q_beta=Q_b[0], k_beta=Q_b[1])
     return tidy.reset_index(), pooled
 
-def apply_translation(df: pd.DataFrame, alpha: float, beta: float, src_col="piccolo", out_col="piccolo_translated"):
+def apply_translation(
+    df: pd.DataFrame,
+    alpha: float,
+    beta: float,
+    src_col: str = "piccolo",
+    out_col: str = "piccolo_translated",
+):
+    """Apply a linear translation to a DataFrame column.
+
+    Parameters
+    ----------
+    df:
+        Input table.
+    alpha, beta:
+        Translation parameters.  ``alpha`` scales the source column and
+        ``beta`` is added to the result.
+    src_col:
+        Name of the column containing the raw piccolo values.
+    out_col:
+        Desired name of the translated column in the output DataFrame.
+
+    Raises
+    ------
+    KeyError
+        If ``src_col`` is not present in ``df``.
+    """
+
+    if src_col not in df.columns:
+        cols = ", ".join(df.columns)
+        raise KeyError(f"Column '{src_col}' not found in input dataframe. Available columns: {cols}")
+
     out = df.copy()
     out[out_col] = alpha * out[src_col] + beta
     return out
