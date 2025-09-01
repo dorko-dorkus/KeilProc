@@ -9,7 +9,7 @@ Integrated GUI for Kiel + Wall-Static Baseline & Legacy Translation
 
 import sys
 import traceback
-import json
+import json, re
 from pathlib import Path
 import math
 import tkinter as tk
@@ -28,6 +28,7 @@ from kielproc_gui_adapter import (
     generate_flow_map_from_csv, generate_polar_slice_from_csv,
     legacy_results_from_csv, ResultsConfig
 )
+from kielproc.aggregate import integrate_run, RunConfig
 from kielproc.legacy_results import compute_results as compute_results_cli
 from kielproc.qa import DEFAULT_W_MAX, DEFAULT_DELTA_OPP_MAX
 from kielproc.geometry import (
@@ -95,6 +96,10 @@ class App(tk.Tk):
         self.tab_results = ScrollableFrame(self.nb)
         self.nb.add(self.tab_results, text="Results")
         self._build_results(self.tab_results.inner)
+
+        self.tab_integrate = ScrollableFrame(self.nb)
+        self.nb.add(self.tab_integrate, text="8-Port Integration")
+        self._build_integrate(self.tab_integrate.inner)
 
     def _build_phys(self, frm):
         pad = {"padx": 6, "pady": 4}
@@ -329,6 +334,172 @@ class App(tk.Tk):
         self.txt_results = scrolledtext.ScrolledText(frm, height=20)
         self.txt_results.grid(row=row, column=0, columnspan=3, sticky="nsew", **pad)
         frm.grid_rowconfigure(row, weight=1); frm.grid_columnconfigure(1, weight=1)
+
+    _PORT_PAT = re.compile(r"(?i)\bP(?:ORT)?\s*([1-8])\b")
+
+    def _port_id_from_stem(self, stem: str):
+        m = self._PORT_PAT.search(stem)
+        return f"P{m.group(1)}" if m else None
+
+    def _build_integrate(self, frm):
+        pad = {"padx": 6, "pady": 4}
+        row = 0
+
+        # Run folder
+        self.var_run_dir = tk.StringVar()
+        ttk.Label(frm, text="Run folder (PORT CSVs)").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_run_dir, width=56).grid(row=row, column=1, columnspan=2, sticky="we", **pad)
+        ttk.Button(frm, text="Browse...", command=self._pick_run_dir).grid(row=row, column=3, sticky="w", **pad); row += 1
+
+        # Geometry
+        self.var_height = tk.StringVar(value="1.150")
+        self.var_width  = tk.StringVar(value="1.932")
+        ttk.Label(frm, text="Duct height [m]").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_height, width=12).grid(row=row, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="Duct width [m]").grid(row=row, column=2, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_width, width=12).grid(row=row, column=3, sticky="w", **pad); row += 1
+
+        # Static & baro reconciliation
+        self.var_baro = tk.StringVar()  # empty means "use CSV absolute or CSV baro"
+        ttk.Label(frm, text="Baro [Pa] (only if Static_gauge)").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_baro, width=12).grid(row=row, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="Replicate strategy").grid(row=row, column=2, sticky="e", **pad)
+        self.var_rep = tk.StringVar(value="mean")
+        ttk.Combobox(frm, textvariable=self.var_rep, values=["mean","last"], width=10, state="readonly").grid(row=row, column=3, sticky="w", **pad); row += 1
+
+        # Weights
+        self.var_weights_path = tk.StringVar()
+        ttk.Label(frm, text="Weights JSON (optional)").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_weights_path, width=56).grid(row=row, column=1, columnspan=2, sticky="we", **pad)
+        ttk.Button(frm, text="Browse...", command=self._pick_weights).grid(row=row, column=3, sticky="w", **pad); row += 1
+
+        # DCS comparison (optional)
+        self.var_r = tk.StringVar()
+        self.var_beta = tk.StringVar()
+        ttk.Label(frm, text="Area ratio r = As/At (optional)").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_r, width=12).grid(row=row, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="Venturi beta β (optional)").grid(row=row, column=2, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_beta, width=12).grid(row=row, column=3, sticky="w", **pad); row += 1
+
+        # Actions
+        ttk.Button(frm, text="Discover Ports", command=self._discover_ports).grid(row=row, column=0, sticky="we", **pad)
+        ttk.Button(frm, text="Run Integration", command=self._run_integration).grid(row=row, column=1, sticky="we", **pad)
+        ttk.Button(frm, text="Open Output Folder", command=self._open_out).grid(row=row, column=2, sticky="we", **pad); row += 1
+
+        # Discovery and results panes
+        self.txt_discovery = scrolledtext.ScrolledText(frm, height=6, width=100)
+        self.txt_discovery.grid(row=row, column=0, columnspan=4, sticky="nsew", **pad); row += 1
+
+        cols = ("PortId","FileStem","VP_pa_mean","T_C_mean","Static_abs_pa_mean","v_m_s","rho_v_kg_m2_s","q_s_pa","p_abs_source","replicate_strategy")
+        self.tree = ttk.Treeview(frm, columns=cols, show="headings", height=10)
+        for c in cols:
+            self.tree.heading(c, text=c)
+            self.tree.column(c, width=120, anchor="center")
+        self.tree.grid(row=row, column=0, columnspan=4, sticky="nsew", **pad); row += 1
+
+        self.var_summary = tk.StringVar()
+        ttk.Label(frm, textvariable=self.var_summary, justify="left").grid(row=row, column=0, columnspan=4, sticky="w", **pad)
+
+        frm.grid_columnconfigure(1, weight=1)
+        frm.grid_rowconfigure(row, weight=1)
+
+    def _pick_run_dir(self):
+        d = filedialog.askdirectory(title="Select run folder with PORT CSVs")
+        if d: self.var_run_dir.set(d)
+
+    def _pick_weights(self):
+        p = filedialog.askopenfilename(title="Weights JSON", filetypes=[("JSON","*.json"), ("All","*.*")])
+        if p: self.var_weights_path.set(p)
+
+    def _discover_ports(self):
+        run = Path(self.var_run_dir.get())
+        if not run.exists():
+            messagebox.showerror("Error", "Run folder not found"); return
+        csvs = sorted(run.glob("*.csv"))
+        pairs = []
+        for p in csvs:
+            pid = self._port_id_from_stem(p.stem)
+            if pid: pairs.append((pid, p.name))
+        present = [pid for pid,_ in pairs]
+        missing = [f"P{i}" for i in range(1,9) if f"P{i}" not in present]
+        self.txt_discovery.delete("1.0", "end")
+        self.txt_discovery.insert("end", f"Found: {present}\nMissing: {missing}\nFiles: {pairs}\n")
+
+    def _load_weights(self):
+        wp = self.var_weights_path.get().strip()
+        if not wp: return None
+        try:
+            jd = json.loads(Path(wp).read_text())
+        except Exception as e:
+            messagebox.showerror("Weights JSON", f"Failed to load JSON: {e}"); return None
+        # normalize keys like PORT 1, p1, Run_P1 -> P1
+        out = {}
+        for k,v in jd.items():
+            pid = self._port_id_from_stem(Path(k).stem) or str(k).upper()
+            out[pid] = out.get(pid, 0.0) + float(v)
+        s = sum(out.values())
+        if abs(s - 1.0) > 1e-6:
+            messagebox.showerror("Weights JSON", f"Weights must sum to 1.0 (got {s:.6f})"); return None
+        return out
+
+    def _run_integration(self):
+        try:
+            run = Path(self.var_run_dir.get())
+            H = float(self.var_height.get()); W = float(self.var_width.get())
+            baro = self.var_baro.get().strip()
+            baro_pa = float(baro) if baro else None
+            rep = self.var_rep.get()
+            weights = self._load_weights()
+            r = float(self.var_r.get()) if self.var_r.get().strip() else None
+            beta = float(self.var_beta.get()) if self.var_beta.get().strip() else None
+
+            cfg = RunConfig(height_m=H, width_m=W, weights=weights, replicate_strategy=rep)
+            res = integrate_run(run, cfg, file_glob="*.csv", baro_cli_pa=baro_pa, area_ratio=r, beta=beta)
+
+            # populate table
+            for i in self.tree.get_children(): self.tree.delete(i)
+            per = res["per_port"]
+            # DataFrame may be returned or path; handle both
+            if hasattr(per, "to_dict"):
+                rows = per.to_dict(orient="records")
+            else:
+                import pandas as pd
+                rows = pd.read_csv(run / "_integrated" / "per_port.csv").to_dict(orient="records")
+            for row in rows:
+                vals = [row.get(k, "") for k in ("PortId","FileStem","VP_pa_mean","T_C_mean","Static_abs_pa_mean","v_m_s","rho_v_kg_m2_s","q_s_pa","p_abs_source","replicate_strategy")]
+                self.tree.insert("", "end", values=vals)
+
+            duct = res["duct"]
+            summary = [f"area_m2 = {duct.get('area_m2'):.6f}",
+                       f"v_bar_m_s = {duct.get('v_bar_m_s'):.6f}",
+                       f"Q_m3_s = {duct.get('Q_m3_s'):.6f}",
+                       f"m_dot_kg_s = {duct.get('m_dot_kg_s'):.6f}"]
+            if "q_s_pa" in duct: summary.append(f"q_s_pa = {duct.get('q_s_pa'):.3f}")
+            if "q_t_pa" in duct: summary.append(f"q_t_pa = {duct.get('q_t_pa'):.3f}")
+            if "delta_p_vent_est_pa" in duct: summary.append(f"Δp_vent_est_pa = {duct.get('delta_p_vent_est_pa'):.3f}")
+            outdir = run / "_integrated"
+            self._last_outdir = outdir
+            self.var_summary.set("  ".join(summary) + f"   ->  outputs: {outdir}")
+
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("Integration error", str(e))
+
+    def _open_out(self):
+        p = getattr(self, "_last_outdir", None)
+        if not p:
+            messagebox.showinfo("Open output", "Run integration first")
+            return
+        try:
+            import os, platform, subprocess
+            if platform.system() == "Windows":
+                os.startfile(str(p))
+            elif platform.system() == "Darwin":
+                subprocess.check_call(["open", str(p)])
+            else:
+                subprocess.check_call(["xdg-open", str(p)])
+        except Exception as e:
+            messagebox.showerror("Open output", str(e))
 
     def _pick(self, var, patterns):
         p = filedialog.askopenfilename(title="Choose file", filetypes=patterns)
