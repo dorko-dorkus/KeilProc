@@ -10,6 +10,8 @@ def rho_from_pT(ps_pa: np.ndarray, T_K: np.ndarray, R: float = R_SPECIFIC_AIR) -
     """
     ps_pa = np.asarray(ps_pa, dtype=float)
     T_K = np.asarray(T_K, dtype=float)
+    if np.any(T_K <= 0):
+        raise ValueError("Temperature at or below 0 K encountered")
     return ps_pa / (R * T_K)
 
 def map_qs_to_qt(qs: np.ndarray, r: float, rho_t_over_rho_s: float = 1.0) -> np.ndarray:

@@ -46,6 +46,8 @@ def compute_results(csv_or_df: Path | str | pd.DataFrame, cfg: ResultsConfig) ->
 
     # Temperature (°C) and Kelvin for density calc
     tC = pd.to_numeric(df.get(cfg.temp_col, pd.Series(dtype=float)), errors="coerce")
+    if (tC.notna() & (tC <= -273.15)).any():
+        raise ValueError("Temperature at or below -273.15°C encountered")
     T_K = tC + 273.15
     T_mean_K = float(np.nanmean(T_K)) if T_K.notna().any() else 293.15
     tC_mean = float(np.nanmean(tC)) if tC.notna().any() else float("nan")

@@ -1,5 +1,6 @@
 import pandas as pd
 from pathlib import Path
+import pytest
 from kielproc.legacy_results import ResultsConfig, compute_results
 
 def test_compute_results_basic(tmp_path: Path):
@@ -48,3 +49,17 @@ def test_compute_results_dataframe():
     cfg = ResultsConfig(static_col="Static", duct_height_m=2.0, duct_width_m=3.0)
     res = compute_results(df, cfg)
     assert res["n_samples"] == 2
+
+
+def test_compute_results_rejects_sub_absolute_zero(tmp_path: Path):
+    df = pd.DataFrame({
+        "Temperature": [-274.0, -200.0],
+        "VP": [10.0, 11.0],
+        "Static": [101325.0, 101300.0],
+        "Piccolo": [12.0, 12.0],
+    })
+    csv = tmp_path / "bad.csv"
+    df.to_csv(csv, index=False)
+    cfg = ResultsConfig(static_col="Static", duct_height_m=1.0, duct_width_m=1.0)
+    with pytest.raises(ValueError):
+        compute_results(csv, cfg)
