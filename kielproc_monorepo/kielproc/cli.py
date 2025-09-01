@@ -59,12 +59,12 @@ def build_parser():
     p4.add_argument(
         "--run-dir",
         required=True,
-        help="Directory containing port CSVs (filenames should include P1..P8 or PORT 1..PORT 8)",
+        help="Directory containing port CSVs (filenames should include P1..P8 or variants like PORT 1)",
     )
     p4.add_argument("--duct-height", type=float, required=True)
     p4.add_argument("--duct-width", type=float, required=True)
     p4.add_argument("--baro", type=float, default=None, help="Barometric [Pa] to combine with gauge Static if Baro column absent")
-    p4.add_argument("--weights-json", type=str, default=None, help='Optional JSON mapping, e.g. {"PORT 1":0.125,...}')
+    p4.add_argument("--weights-json", type=str, default=None, help='Optional JSON mapping, e.g. {"P1":0.125,...}')
     p4.add_argument("--replicate-strategy", choices=["mean","last"], default="mean")
     p4.add_argument("--area-ratio", type=float, default=None, help="Downstream-to-throat area ratio r = A_s/A_t for q_t mapping")
     p4.add_argument("--beta", type=float, default=None, help="Venturi diameter ratio β=d_t/D1 for Δp_vent estimate")
