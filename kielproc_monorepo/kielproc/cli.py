@@ -56,7 +56,11 @@ def build_parser():
     i3.add_argument("--out", required=True)
 
     p4 = sub.add_parser("integrate-ports", help="Integrate PORT*.csv in a folder into duct results")
-    p4.add_argument("--run-dir", required=True, help="Directory containing port CSVs (filenames should include P1..P8)")
+    p4.add_argument(
+        "--run-dir",
+        required=True,
+        help="Directory containing port CSVs (filenames should include P1..P8 or PORT 1..PORT 8)",
+    )
     p4.add_argument("--duct-height", type=float, required=True)
     p4.add_argument("--duct-width", type=float, required=True)
     p4.add_argument("--baro", type=float, default=None, help="Barometric [Pa] to combine with gauge Static if Baro column absent")
