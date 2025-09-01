@@ -35,7 +35,17 @@ def build_parser():
     i2.add_argument("--ref-col", default="mapped_ref")
     i2.add_argument("--piccolo-col", default="piccolo")
     i2.add_argument("--lambda-ratio", type=float, default=1.0)
-    i2.add_argument("--max-lag", type=int, default=300)
+    i2.add_argument("--max-lag", type=int, default=300, help="Lag scan bound (samples)")
+    i2.add_argument("--sampling-hz", type=float, default=None,
+                    help="Sampling rate [Hz]; enables lag_seconds = lag_samples/sampling_hz and plateau windows in seconds")
+    # Optional steady-plateau gating
+    i2.add_argument("--plateau-window-s", type=float, default=None,
+                    help="Sliding-window size [s] for steady-plateau SD/mean check")
+    i2.add_argument("--plateau-sd-frac", type=float, default=None,
+                    help="Max allowed (SD/mean) within the window for both reference and piccolo")
+    # Optional Piccolo scaling/QA from mA
+    i2.add_argument("--piccolo-ma-col", type=str, default=None, help="If provided, convert this 4–20 mA column to Pa")
+    i2.add_argument("--piccolo-range-mbar", type=float, default=6.7, help="Transmitter range plate [mbar]; default 6.7")
     i2.add_argument("--pN-col", default="pN")
     i2.add_argument("--pS-col", default="pS")
     i2.add_argument("--pE-col", default="pE")
@@ -64,7 +74,9 @@ def build_parser():
     p4.add_argument("--duct-height", type=float, required=True)
     p4.add_argument("--duct-width", type=float, required=True)
     p4.add_argument("--baro", type=float, default=None, help="Barometric [Pa] to combine with gauge Static if Baro column absent")
-    p4.add_argument("--weights-json", type=str, default=None, help='Optional JSON mapping, e.g. {"P1":0.125,...}')
+    p4.add_argument("--weights-json", type=str, default=None,
+                    help='Optional JSON mapping, e.g. {"P1":0.125,...}. '
+                         'If omitted, auto-uses <run-dir>/weights.json when present.')
     p4.add_argument("--replicate-strategy", choices=["mean","last"], default="mean")
     p4.add_argument("--area-ratio", type=float, default=None, help="Downstream-to-throat area ratio r = A_s/A_t for q_t mapping")
     p4.add_argument("--beta", type=float, default=None, help="Venturi diameter ratio β=d_t/D1 for Δp_vent estimate")
@@ -110,8 +122,43 @@ def main(argv=None):
         for spec in a.blocks:
             name, p = spec.split("=", 1)
             blocks[name] = pd.read_csv(p)
+        # Optional Piccolo mA → Pa conversion & QA marks
+        if a.piccolo_ma_col:
+            for name, df in blocks.items():
+                if a.piccolo_ma_col not in df.columns:
+                    raise SystemExit(f"--piccolo-ma-col={a.piccolo_ma_col} not found in {name}")
+                ma = pd.to_numeric(df[a.piccolo_ma_col], errors="coerce").to_numpy(float)
+                bad = (ma <= 0.0) | (ma < 4.0) | (ma > 20.0)
+                df["piccolo_ma_bad"] = bad.astype(int)
+                piccolo_mbar = (ma - 4.0) / 16.0 * float(a.piccolo_range_mbar)
+                df[a.piccolo_col] = 100.0 * piccolo_mbar
+        # Optional steady-plateau gate (sliding window SD/mean)
+        if a.plateau_window_s and a.plateau_sd_frac and a.sampling_hz:
+            win = max(int(round(a.plateau_window_s * a.sampling_hz)), 1)
+            for name, df in list(blocks.items()):
+                def max_sd_over_mean(x):
+                    x = pd.to_numeric(x, errors="coerce").to_numpy(float)
+                    n = len(x)
+                    if n < win:
+                        return float("inf")
+                    best = 0.0
+                    for i in range(0, n - win + 1):
+                        w = x[i:i+win]
+                        m = np.nanmean(w)
+                        s = np.nanstd(w)
+                        if m != 0:
+                            best = max(best, s/abs(m))
+                    return best
+                mref = max_sd_over_mean(df[a.ref_col])
+                mpic = max_sd_over_mean(df[a.piccolo_col])
+                df["plateau_sd_over_mean_ref"] = mref
+                df["plateau_sd_over_mean_pic"] = mpic
+                if (mref > a.plateau_sd_frac) or (mpic > a.plateau_sd_frac):
+                    del blocks[name]
         per_block, pooled = compute_translation_table(blocks, ref_key=a.ref_col, picc_key=a.piccolo_col,
                                                       lambda_ratio=a.lambda_ratio, max_lag=a.max_lag)
+        if a.sampling_hz:
+            per_block["lag_seconds"] = per_block["lag_samples"] / float(a.sampling_hz)
         # Compute QA indices for each block
         from .qa import qa_indices
         qa_rows = []
@@ -162,7 +209,21 @@ def main(argv=None):
         for row in per_block.itertuples():
             print(f"block={row.block} τ={row.lag_samples} r_peak={row.r_peak:.3f}")
     elif a.cmd == "integrate-ports":
-        weights = json.loads(a.weights_json) if a.weights_json else None
+        # Auto-discover per-run artifacts
+        weights: dict[str, float] | None = None
+        if a.weights_json:
+            weights = json.loads(Path(a.weights_json).read_text())
+        else:
+            cand = Path(a.run_dir) / "weights.json"
+            if cand.exists():
+                weights = json.loads(cand.read_text())
+        area_ratio = a.area_ratio
+        beta = a.beta
+        gpath = Path(a.run_dir) / "geometry.json"
+        if gpath.exists() and (area_ratio is None or beta is None):
+            g = json.loads(gpath.read_text())
+            area_ratio = area_ratio if area_ratio is not None else (g.get("r") or g.get("area_ratio"))
+            beta = beta if beta is not None else (g.get("\u03b2") or g.get("beta"))
         cfg = RunConfig(
             height_m=a.duct_height,
             width_m=a.duct_width,
@@ -174,8 +235,8 @@ def main(argv=None):
             cfg,
             file_glob=a.file_glob,
             baro_cli_pa=a.baro,
-            area_ratio=a.area_ratio,
-            beta=a.beta,
+            area_ratio=area_ratio,
+            beta=beta,
         )
         outdir = Path(a.run_dir) / "_integrated"
         outdir.mkdir(parents=True, exist_ok=True)
