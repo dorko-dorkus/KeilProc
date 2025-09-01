@@ -32,7 +32,7 @@ def test_legacy_cube_to_dataframe_handles_padding(tmp_path):
     assert ("B", 1) not in df.index
 
     # Values from the original sheets should be preserved
-    assert df.loc[("A", 0), "Static"] == 10
+    assert df.loc[("A", 0), "Static_gauge"] == 10000
     assert df.loc[("A", 1), "VP"] == 2
     assert df.loc[("B", 0), "Temperature"] == 27
     assert df.loc[("A", 1), "Time_s"] == 1.0
