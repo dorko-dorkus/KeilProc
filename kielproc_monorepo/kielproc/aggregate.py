@@ -5,16 +5,108 @@ import json, re
 import numpy as np
 import pandas as pd
 
-# Matches P1, PORT 1, Port_1, Run07_P1, etc.
-PORT_RE = re.compile(r"(?i)(?<![0-9A-Za-z])P(?:ORT)?[ _]?([1-8])(?![0-9A-Za-z])")
+# Matches P1, PORT 1, Port_1, Run07_P1, etc.  Avoids matching P10 etc.
+_PORT_PAT = re.compile(r"(?i)(?<![0-9A-Za-z])P(?:ORT)?[ _]*([1-8])(?![0-9A-Za-z])")
 
 
 def _port_id(label: str) -> str:
     """Return canonical port ID (``P1``..``P8``) from a filename or label."""
-    m = PORT_RE.search(str(label))
+    m = _PORT_PAT.search(str(label))
     if not m:
         raise ValueError(f"Cannot parse port identifier from {label!r}")
     return f"P{m.group(1)}"
+
+
+def _port_id_from_stem(stem: str) -> str | None:
+    m = _PORT_PAT.search(stem)
+    return f"P{m.group(1)}" if m else None
+
+
+def _has_headers(df: pd.DataFrame) -> bool:
+    """Quick sniff for acceptable VP/Temperature aliases without raising."""
+    low = {c.lower() for c in df.columns}
+    vp_ok = any(k.lower() in low for k in _VP_ALIASES)
+    t_ok = any(k.lower() in low for k in _T_ALIASES)
+    return bool(vp_ok and t_ok)
+
+
+def _load_parse_summary_pairs(run_dir: Path) -> list[tuple[str, Path]] | None:
+    """Use ``*__parse_summary.json`` if present to pick only vertical sheets P1..P8."""
+    js = list(run_dir.glob("*__parse_summary.json"))
+    if not js:
+        return None
+    try:
+        data = json.loads(js[0].read_text())
+        sheets = data.get("sheets", [])
+    except Exception:
+        return None
+    pairs: list[tuple[str, Path]] = []
+    for e in sheets:
+        if e.get("mode") != "vertical":
+            continue  # reject 'Data' and calc sheets outright
+        sheet = str(e.get("sheet", "")).strip()
+        m = re.match(r"(?i)^p([1-8])$", sheet)
+        if not m:
+            continue
+        pid = f"P{m.group(1)}"
+        p = Path(e.get("csv_path", ""))
+        # if parse JSON holds an absolute path from another machine, resolve by filename in run_dir
+        if not p.exists():
+            local = run_dir / p.name
+            if local.exists():
+                p = local
+        if p.exists():
+            pairs.append((pid, p))
+    if pairs:
+        pairs.sort(key=lambda kv: int(kv[0][1:]))
+        return pairs
+    return None
+
+
+def _discover_pairs(run_dir: Path, file_glob: str) -> tuple[list[tuple[str, Path]], list[tuple[str, str]]]:
+    """
+    Return ``(pairs, skipped)`` where ``pairs = [(PortId, Path)]`` and
+    ``skipped = [(filename, reason)]``.
+    Preference order:
+      1) parse_summary vertical sheets P1..P8 (if present)
+      2) header-sniffed CSVs in run_dir labeled P1.. in discovery order
+    """
+    pairs = _load_parse_summary_pairs(run_dir)
+    skipped: list[tuple[str, str]] = []
+    if pairs:
+        # sanity: header sniff and drop any accidental non-data CSVs
+        ok: list[tuple[str, Path]] = []
+        for pid, p in pairs:
+            try:
+                df = pd.read_csv(p, nrows=50)
+                if _has_headers(df):
+                    ok.append((pid, p))
+                else:
+                    skipped.append((p.name, "no VP/Temperature headers"))
+            except Exception as e:
+                skipped.append((p.name, f"read error: {e}"))
+        ok.sort(key=lambda kv: int(kv[0][1:]))
+        return ok, skipped
+
+    # fallback: glob, sniff, label as P1.. in sorted name order
+    candidates = []
+    for p in sorted(run_dir.glob(file_glob)):
+        try:
+            df = pd.read_csv(p, nrows=50)
+        except Exception as e:
+            skipped.append((p.name, f"read error: {e}"))
+            continue
+        if not _has_headers(df):
+            skipped.append((p.name, "no VP/Temperature headers"))
+            continue
+        candidates.append(p)
+    pairs: list[tuple[str, Path]] = []
+    for idx, p in enumerate(candidates[:8], start=1):
+        stem_id = _port_id_from_stem(p.stem)
+        pid = stem_id if stem_id else f"P{idx}"
+        pairs.append((pid, p))
+    pairs.sort(key=lambda kv: int(kv[0][1:]))
+    return pairs, skipped
 
 R = 287.05  # J/(kg·K)
 
@@ -197,43 +289,29 @@ def integrate_run(
     beta: float | None = None,
 ) -> dict:
     """
-    Reads port CSVs from ``run_dir`` whose names contain identifiers like
-    ``P1``, ``PORT 1``, ``Port_1`` or ``Run07_P1``.  Each file is normalized,
-    reduced per port and assigned a canonical ``P1``…``P8`` key before
-    horizontal integration.  Returns
-    ``{'per_port': DataFrame, 'duct': dict, 'files': list, 'normalize_meta': dict_by_port, 'pairs': list[(PortId, Path)]}``.
+    Discover port CSVs, normalize, reduce and integrate. Skips non-data CSVs
+    safely. Returns
+    ``{'per_port': DataFrame, 'duct': dict, 'files': list, 'normalize_meta': dict, 'pairs': list, 'skipped': list}``.
     """
     run_dir = Path(run_dir)
-    # Prefer explicit glob, fallback to any CSV with port-like names
-    pairs = sorted(
-        (_port_id(p.stem), p)
-        for p in run_dir.glob(file_glob)
-        if PORT_RE.search(p.stem)
-    )
+    pairs, skipped = _discover_pairs(run_dir, file_glob)
     if not pairs:
-        pairs = sorted(
-            (_port_id(p.stem), p)
-            for p in run_dir.glob("*.csv")
-            if PORT_RE.search(p.stem)
-        )
-    if not pairs:
-        raise FileNotFoundError(f"No port CSVs matching 'P1..P8' in {run_dir}")
+        raise FileNotFoundError(f"No usable port CSVs found in {run_dir}")
 
     rows, normalize_meta = [], {}
-    for port_key, pf in pairs:
+    for port_id, pf in pairs:
         raw = pd.read_csv(pf)
         norm, meta = _normalize_df(raw, baro_cli_pa)
         normalize_meta[pf.name] = meta
         scal = _port_scalars_from_samples(norm, cfg.replicate_strategy)
-        # plane-wise means for audit context
         rows.append({
-            "Port": port_key,
+            "Port": port_id,
             "FileStem": pf.stem,
             "VP_pa_mean": float(pd.to_numeric(norm["VP"]).mean()),
             "T_C_mean": float(pd.to_numeric(norm["Temperature"]).mean()),
             "Static_abs_pa_mean": float(pd.to_numeric(norm["Static_abs_Pa"]).mean()),
             **scal,
-            "p_abs_source": meta["p_abs_source"],
+            "p_abs_source": meta.get("p_abs_source", ""),
             "replicate_strategy": (cfg.replicate_strategy if "Replicate" in norm.columns else "none"),
         })
     per = pd.DataFrame(rows).sort_values("Port").reset_index(drop=True)
@@ -241,9 +319,10 @@ def integrate_run(
     # weights
     if cfg.weights:
         w = np.array([cfg.weights.get(p, 0.0) for p in per["Port"]], float)
-        if not np.isclose(w.sum(), 1.0): raise ValueError("Port weights must sum to 1.0")
+        if not np.isclose(w.sum(), 1.0):
+            raise ValueError("Port weights must sum to 1.0")
     else:
-        w = np.full(len(per), 1.0/len(per))
+        w = np.full(len(per), 1.0 / len(per))
 
     A = cfg.height_m * cfg.width_m
     v_bar = float(np.nansum(w * per["v_m_s"].to_numpy(float)))
@@ -251,19 +330,18 @@ def integrate_run(
     Q = A * v_bar
     m_dot = A * mflux
 
-    # Optional DCS comparison
     out = {"v_bar_m_s": v_bar, "area_m2": A, "Q_m3_s": Q, "m_dot_kg_s": m_dot}
     if area_ratio is not None:
         q_s = float(np.nansum(w * per["q_s_pa"].to_numpy(float)))
-        q_t = (area_ratio**2) * q_s
         out["q_s_pa"] = q_s
-        out["q_t_pa"] = q_t
+        out["q_t_pa"] = (area_ratio**2) * q_s
         if beta is not None:
-            out["delta_p_vent_est_pa"] = (1.0 - beta**4) * q_t
+            out["delta_p_vent_est_pa"] = (1.0 - beta**4) * out["q_t_pa"]
     return {
         "per_port": per,
         "duct": out,
         "files": [p.name for _, p in pairs],
         "normalize_meta": normalize_meta,
-        "pairs": pairs,  # list[(PortId, Path)]
+        "pairs": pairs,
+        "skipped": skipped,
     }
