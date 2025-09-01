@@ -13,6 +13,7 @@ from .io import load_legacy_excel, load_logger_csv, unify_schema
 from .translate import compute_translation_table, apply_translation
 from .report import write_summary_tables, plot_alignment
 from .qa import qa_indices
+from .aggregate import RunConfig, integrate_run
 from .geometry import (
     Geometry,
     plane_area,
@@ -34,5 +35,6 @@ __all__ = [
     "compute_translation_table", "apply_translation",
     "write_summary_tables", "plot_alignment", "qa_indices",
     "Geometry", "plane_area", "effective_upstream_area", "throat_area", "r_ratio", "beta_from_geometry", "geometry_summary",
+    "RunConfig", "integrate_run",
     "ResultsConfig", "compute_legacy_results",
 ]
