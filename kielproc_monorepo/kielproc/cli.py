@@ -69,6 +69,10 @@ def build_parser():
     p4.add_argument("--area-ratio", type=float, default=None, help="Downstream-to-throat area ratio r = A_s/A_t for q_t mapping")
     p4.add_argument("--beta", type=float, default=None, help="Venturi diameter ratio β=d_t/D1 for Δp_vent estimate")
     p4.add_argument("--file-glob", default="*.csv", help="Custom glob if needed (default *.csv)")
+    p4.add_argument("--viz", action="store_true", help="Render velocity heatmap png")
+    p4.add_argument("--viz-height-bins", type=int, default=50)
+    p4.add_argument("--viz-clip", default="2,98", help="percentiles low,high e.g. 2,98")
+    p4.add_argument("--viz-interp", choices=["nearest", "linear", "cubic"], default="nearest")
     return p
 
 def main(argv=None):
@@ -178,18 +182,26 @@ def main(argv=None):
         res["per_port"].to_csv(outdir / "per_port.csv", index=False)
         (outdir / "duct_result.json").write_text(json.dumps(res["duct"], indent=2))
         (outdir / "normalize_meta.json").write_text(json.dumps(res["normalize_meta"], indent=2))
-        print(
-            json.dumps(
-                {
-                    "per_port_csv": str(outdir / "per_port.csv"),
-                    "duct_result_json": str(outdir / "duct_result.json"),
-                    "normalize_meta_json": str(outdir / "normalize_meta.json"),
-                    "files_used": res["files"],
-                    "pairs_used": [(pid, pf.name) for pid, pf in res.get("pairs", [])],
-                },
-                indent=2,
+        summary = {
+            "per_port_csv": str(outdir / "per_port.csv"),
+            "duct_result_json": str(outdir / "duct_result.json"),
+            "normalize_meta_json": str(outdir / "normalize_meta.json"),
+            "files_used": res["files"],
+            "pairs_used": [(pid, pf.name) for pid, pf in res.get("pairs", [])],
+        }
+        if a.viz:
+            from .visuals import render_velocity_heatmap
+            lo, hi = (float(x) for x in a.viz_clip.split(","))
+            heatmap_path = render_velocity_heatmap(
+                outdir=outdir,
+                pairs=res.get("pairs", []),
+                baro_cli_pa=a.baro,
+                height_bins=a.viz_height_bins,
+                clip_percentiles=(lo, hi),
+                interp=a.viz_interp,
             )
-        )
+            summary["heatmap_velocity_png"] = str(heatmap_path)
+        print(json.dumps(summary, indent=2))
     elif a.cmd == "translate":
         df = pd.read_csv(a.csv)
         out = apply_translation(df, a.alpha, a.beta, src_col=a.in_col, out_col=a.out_col)
