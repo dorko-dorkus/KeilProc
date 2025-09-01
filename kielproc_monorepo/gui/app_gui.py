@@ -381,6 +381,21 @@ class App(tk.Tk):
         ttk.Label(frm, text="Venturi beta β (optional)").grid(row=row, column=2, sticky="e", **pad)
         ttk.Entry(frm, textvariable=self.var_beta, width=12).grid(row=row, column=3, sticky="w", **pad); row += 1
 
+        # Visuals
+        self.var_viz = tk.BooleanVar(value=False)
+        self.var_viz_bins = tk.StringVar(value="50")
+        self.var_viz_clip = tk.StringVar(value="2,98")
+        self.var_viz_interp = tk.StringVar(value="nearest")
+        ttk.Checkbutton(frm, text="Render velocity heatmap", variable=self.var_viz).grid(row=row, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Height bins").grid(row=row, column=1, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_viz_bins, width=6).grid(row=row, column=2, sticky="w", **pad)
+        ttk.Label(frm, text="Clip pcts").grid(row=row, column=3, sticky="e", **pad); row += 1
+        ttk.Entry(frm, textvariable=self.var_viz_clip, width=8).grid(row=row, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Interp").grid(row=row, column=1, sticky="e", **pad)
+        ttk.Combobox(frm, textvariable=self.var_viz_interp, values=["nearest","linear","cubic"], width=10, state="readonly").grid(row=row, column=2, sticky="w", **pad)
+        self.btn_open_heatmap = ttk.Button(frm, text="Open Heatmap", command=self._open_heatmap, state="disabled")
+        self.btn_open_heatmap.grid(row=row, column=3, sticky="we", **pad); row += 1
+
         # Actions
         ttk.Button(frm, text="Discover Ports", command=self._discover_ports).grid(row=row, column=0, sticky="we", **pad)
         ttk.Button(frm, text="Run Integration", command=self._run_integration).grid(row=row, column=1, sticky="we", **pad)
@@ -481,6 +496,36 @@ class App(tk.Tk):
             self._last_outdir = outdir
             self.var_summary.set("  ".join(summary) + f"   ->  outputs: {outdir}")
 
+            # visuals
+            if self.var_viz.get():
+                try:
+                    from kielproc.visuals import render_velocity_heatmap
+                    # rebuild pairs from res if available; else rediscover
+                    pairs = res.get("pairs")
+                    if not pairs:
+                        # rediscover using same pattern as integrator
+                        csvs = sorted(run.glob("*.csv"))
+                        pairs = []
+                        for p in csvs:
+                            pid = self._port_id_from_stem(p.stem)
+                            if pid: pairs.append((pid, p))
+                        pairs.sort(key=lambda kv: int(kv[0][1:]))
+                    bins = int(self.var_viz_bins.get() or "50")
+                    lo, hi = (float(x) for x in (self.var_viz_clip.get() or "2,98").split(","))
+                    hm = render_velocity_heatmap(
+                        outdir=outdir,
+                        pairs=pairs,
+                        baro_cli_pa=baro_pa,
+                        height_bins=bins,
+                        clip_percentiles=(lo, hi),
+                        interp=self.var_viz_interp.get(),
+                    )
+                    self._heatmap_path = hm
+                    self.btn_open_heatmap.config(state="normal")
+                except Exception as e:
+                    traceback.print_exc()
+                    messagebox.showerror("Heatmap error", str(e))
+
         except Exception as e:
             traceback.print_exc()
             messagebox.showerror("Integration error", str(e))
@@ -500,6 +545,22 @@ class App(tk.Tk):
                 subprocess.check_call(["xdg-open", str(p)])
         except Exception as e:
             messagebox.showerror("Open output", str(e))
+
+    def _open_heatmap(self):
+        try:
+            p = getattr(self, "_heatmap_path", None)
+            if not p:
+                messagebox.showinfo("Open heatmap", "No heatmap rendered yet")
+                return
+            import os, platform, subprocess
+            if platform.system() == "Windows":
+                os.startfile(str(p))
+            elif platform.system() == "Darwin":
+                subprocess.check_call(["open", str(p)])
+            else:
+                subprocess.check_call(["xdg-open", str(p)])
+        except Exception as e:
+            messagebox.showerror("Open heatmap", str(e))
 
     def _pick(self, var, patterns):
         p = filedialog.askopenfilename(title="Choose file", filetypes=patterns)
