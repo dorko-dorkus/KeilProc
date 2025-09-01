@@ -1,9 +1,9 @@
 import pandas as pd
 from kielproc.aggregate import integrate_run, RunConfig
 
-def _write_csv(path):
+def _write_csv(path, vp=1.0):
     df = pd.DataFrame({
-        "VP": [1.0],
+        "VP": [vp],
         "Temperature": [20.0],
         "Static": [101325.0],
     })
@@ -17,4 +17,14 @@ def test_integrate_run_port_name_variants(tmp_path):
     cfg = RunConfig(height_m=1.0, width_m=1.0)
     res = integrate_run(tmp_path, cfg)
     assert sorted(res["files"]) == sorted(names)
-    assert res["per_port"]["Port"].tolist() == ["PORT 1", "PORT 2", "PORT 3", "PORT 4"]
+    assert res["per_port"]["Port"].tolist() == ["P1", "P2", "P3", "P4"]
+
+
+def test_integrate_run_weight_key_variants(tmp_path):
+    names = ["Run07_P1.csv", "PORT 2.csv"]
+    for name in names:
+        _write_csv(tmp_path / name)
+    cfg = RunConfig(height_m=1.0, width_m=1.0, weights={"PORT 1": 0.25, "Port_2": 0.75})
+    assert cfg.weights == {"P1": 0.25, "P2": 0.75}
+    res = integrate_run(tmp_path, cfg)
+    assert res["per_port"]["Port"].tolist() == ["P1", "P2"]
