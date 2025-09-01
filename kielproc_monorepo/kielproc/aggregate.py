@@ -11,91 +11,117 @@ R = 287.05  # J/(kg·K)
 
 _VP_ALIASES = ["VP","Velocity Pressure","VelPress_Pa","q_dyn_Pa","VelPress_inH2O","VelPress_mmH2O"]
 _T_ALIASES  = ["Temperature","Temp_C","Duct Air Temperature","T_C","Temp_F","Temperature_F"]
-_S_ALIASES  = ["Static","Static Pressure","P_static_Pa","Gauge_Pa","Static_kPa","P_abs_Pa","Baro_Pa"]
+_S_ALIASES  = [
+    "Static",
+    "Static Pressure",
+    "P_static_Pa",
+    "Static_kPa",
+    "P_abs_Pa",
+    "Static_gauge",
+    "Static_g",
+    "Gauge_Pa",
+]
+_BARO_ALIASES = ["Baro", "Baro_Pa", "Barometric", "Atmos_Pa", "Ambient_kPa", "Barometric_kPa"]
 _TS_ALIASES = ["Time","Timestamp","DateTime","t","time","epoch"]
-
-_UNIT_HINTS = {
-    # (col, suffix_or_exact) -> converter to SI
-    ("VP","Pa"):           lambda x: pd.to_numeric(x, errors="coerce"),
-    ("VP","inH2O"):        lambda x: pd.to_numeric(x, errors="coerce") * 249.08891,
-    ("VP","mmH2O"):        lambda x: pd.to_numeric(x, errors="coerce") * 9.80665,
-    ("Static","Pa"):       lambda x: pd.to_numeric(x, errors="coerce"),
-    ("Static","kPa"):      lambda x: pd.to_numeric(x, errors="coerce") * 1000.0,
-    ("Temperature","C"):   lambda x: pd.to_numeric(x, errors="coerce"),
-    ("Temperature","F"):   lambda x: (pd.to_numeric(x, errors="coerce") - 32.0) * (5.0/9.0),
-}
 
 def _pick(df: pd.DataFrame, names: list[str]) -> str | None:
     low = {c.lower(): c for c in df.columns}
     for n in names:
-        if n.lower() in low: return low[n.lower()]
+        if n and n.lower() in low:
+            return low[n.lower()]
     return None
 
 def _infer_unit_from_name(colname: str, default: str) -> str:
-    nm = colname.lower()
-    if "inh2o" in nm: return "inH2O"
-    if "mmh2o" in nm: return "mmH2O"
-    if nm.endswith("_kpa") or "kpa" in nm: return "kPa"
-    if nm.endswith("_pa")  or re.search(r"(?<!k)pa\b", nm): return "Pa"
-    if nm.endswith("_f")   or nm.endswith("temp_f"): return "F"
-    if nm.endswith("_c"): return "C"
+    nm = (colname or '').lower()
+    if 'inh2o' in nm:
+        return 'inH2O'
+    if 'mmh2o' in nm:
+        return 'mmH2O'
+    if 'kpa' in nm:
+        return 'kPa'
+    if nm.endswith('_pa') or ' pa' in nm:
+        return 'Pa'
+    if nm.endswith('_f'):
+        return 'F'
+    if nm.endswith('_c'):
+        return 'C'
     return default
 
 def _coerce(kind: str, series: pd.Series, unit_hint: str) -> pd.Series:
-    key = (kind, unit_hint)
-    if key not in _UNIT_HINTS:
-        raise ValueError(f"Unsupported unit for {kind}: {unit_hint}")
-    return _UNIT_HINTS[key](series)
+    if kind == "VP" and unit_hint == "inH2O":
+        return pd.to_numeric(series, errors="coerce") * 249.08891
+    if kind == "VP" and unit_hint == "mmH2O":
+        return pd.to_numeric(series, errors="coerce") * 9.80665
+    if unit_hint == "kPa":
+        return pd.to_numeric(series, errors="coerce") * 1000.0
+    if kind == "Temperature" and unit_hint == "F":
+        return (pd.to_numeric(series, errors="coerce") - 32.0) * (5.0/9.0)
+    return pd.to_numeric(series, errors="coerce")
 
-def _try_repo_unifier(df: pd.DataFrame):
-    """If the repo ships unify_schema/load_logger_csv, prefer that."""
+def _normalize_df(df_raw: pd.DataFrame, baro_cli_pa: float | None):
+    # 1) project unify_schema if present
     try:
-        from .io import unify_schema  # type: ignore
-        out = unify_schema(df)        # expected to return VP/Temperature/Static/Time if possible
-        return out
+        from .io import unify_schema  # optional project helper
+        cand = unify_schema(df_raw)
     except Exception:
-        return None
+        cand = None
+    df = (cand if isinstance(cand, pd.DataFrame) else df_raw).copy()
 
-def _normalize_df(df_raw: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """
-    Best-effort normalizer.
-    1) Try repo unify_schema.
-    2) Else map aliases + infer units from header names.
-    Returns (normalized_df, meta) where normalized has VP [Pa], Temperature [C], optional Static [Pa], Time if present.
-    """
-    # Attempt 1: project-provided unifier
-    un = _try_repo_unifier(df_raw)
-    if isinstance(un, pd.DataFrame):
-        meta = {"method": "repo_unify_schema"}
-        return un.copy(), meta
+    vp_col = _pick(df, _VP_ALIASES); t_col = _pick(df, _T_ALIASES)
+    if not vp_col or not t_col:
+        raise ValueError("CSV must contain VP and Temperature columns")
 
-    # Attempt 2: alias + unit inference
-    df = df_raw.copy()
-    vp_col = _pick(df, _VP_ALIASES)
-    t_col  = _pick(df, _T_ALIASES)
-    if vp_col is None or t_col is None:
-        raise ValueError("CSV missing velocity pressure and/or temperature columns")
-
-    st_col = _pick(df, _S_ALIASES)
-    ts_col = _pick(df, _TS_ALIASES)
+    st_col  = _pick(df, _S_ALIASES)
+    bar_col = _pick(df, _BARO_ALIASES)
+    ts_col  = _pick(df, _TS_ALIASES)
 
     vp_unit = _infer_unit_from_name(vp_col, "Pa")
     t_unit  = _infer_unit_from_name(t_col, "C")
     st_unit = _infer_unit_from_name(st_col, "Pa") if st_col else None
+    bar_unit= _infer_unit_from_name(bar_col, "Pa") if bar_col else None
 
     out = pd.DataFrame()
     out["VP"] = _coerce("VP", df[vp_col], vp_unit)
     out["Temperature"] = _coerce("Temperature", df[t_col], t_unit)
-    if st_col:
-        out["Static"] = _coerce("Static", df[st_col], st_unit or "Pa")
     if ts_col:
         out["Time"] = pd.to_datetime(df[ts_col], errors="coerce")
-
-    # If a Replicate column exists, carry it through; otherwise leave absent (caller may segment/aggregate).
     if "Replicate" in df.columns:
         out["Replicate"] = pd.to_numeric(df["Replicate"], errors="coerce").fillna(method="ffill").fillna(0).astype(int)
 
-    meta = {"method": "aliases_units", "vp_unit": vp_unit, "t_unit": t_unit, "static_unit": st_unit}
+    # Absolute static: must exist or be reconstructable
+    static_abs = None
+    if st_col:
+        st_series = _coerce("Static", df[st_col], st_unit or "Pa")
+        # If the header suggests gauge (contains 'gauge' or '_g'), add barometric
+        header_says_gauge = bool(re.search(r"gauge|\b_g\b", st_col, flags=re.I))
+        if header_says_gauge:
+            if bar_col:
+                baro = _coerce("Static", df[bar_col], bar_unit or "Pa")
+            elif baro_cli_pa is not None:
+                baro = pd.Series(baro_cli_pa, index=st_series.index, dtype=float)
+            else:
+                raise ValueError("Gauge static supplied without barometric (column or --baro)")
+            static_abs = st_series + baro
+            p_src = "Static_gauge_plus_baro" if bar_col else "cli_baro_plus_gauge"
+        else:
+            # treat as absolute by contract
+            static_abs = st_series
+            p_src = "Static_absolute_column"
+    elif baro_cli_pa is not None:
+        # No static column → not allowed; we require static per the SoT
+        raise ValueError("Static is required per-sample; provide Static (absolute) or Static_gauge + Baro")
+    else:
+        raise ValueError("Static is required per-sample; provide Static (absolute) or Static_gauge + Baro")
+
+    out["Static_abs_Pa"] = static_abs
+    meta = {
+        "method": "repo_unify_schema" if cand is not None else "aliases_units",
+        "vp_unit": vp_unit,
+        "t_unit": t_unit,
+        "static_unit": st_unit,
+        "baro_unit": bar_unit,
+        "p_abs_source": p_src,
+    }
     return out, meta
 
 # ——— Computation ———
@@ -104,7 +130,7 @@ def _normalize_df(df_raw: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 class RunConfig:
     height_m: float
     width_m: float
-    p_abs_pa: float | None = None              # fallback absolute pressure if Static not absolute
+    p_abs_pa: float | None = None              # barometric pressure [Pa] if Static is gauge
     weights: dict[str, float] | None = None    # keys like "PORT 1", must sum to 1.0 if provided
     replicate_strategy: str = "mean"           # "mean" or "last"
     emit_normalized: bool = False              # write normalized snapshots
@@ -112,34 +138,23 @@ class RunConfig:
 def _rho(T_C: float, p_abs: float) -> float:
     return p_abs / (R * (T_C + 273.15))
 
-def _static_is_absolute(static_series: pd.Series) -> bool:
-    """Heuristic: treat as absolute if median is in ~80–120 kPa."""
-    s = pd.to_numeric(static_series, errors="coerce").dropna()
-    if s.empty: return False
-    med = float(s.median())
-    return 80_000.0 <= med <= 120_000.0
-
 def _reduce_port(df_norm: pd.DataFrame, cfg: RunConfig) -> tuple[float,float,float,dict]:
     """
     Returns (VP_mean_Pa, T_C_mean, p_abs_Pa, notes).
-    Uses Static if present and absolute; otherwise uses cfg.p_abs_pa.
+    Uses Static_abs_Pa if present; otherwise uses cfg.p_abs_pa.
     Replicates, if present, are reduced by cfg.replicate_strategy.
     """
     if "VP" not in df_norm or "Temperature" not in df_norm:
         raise ValueError("Normalized frame missing VP or Temperature")
 
-    # choose absolute pressure source
     notes = {}
-    if "Static" in df_norm and df_norm["Static"].notna().any() and _static_is_absolute(df_norm["Static"]):
-        p_abs = float(pd.to_numeric(df_norm["Static"], errors="coerce").median())
-        notes["p_abs_source"] = "Static_column_absolute"
+    if "Static_abs_Pa" in df_norm and df_norm["Static_abs_Pa"].notna().any():
+        p_abs = float(pd.to_numeric(df_norm["Static_abs_Pa"], errors="coerce").median())
     elif cfg.p_abs_pa is not None:
         p_abs = float(cfg.p_abs_pa)
-        notes["p_abs_source"] = "config_p_abs_pa"
     else:
-        raise ValueError("Absolute pressure required: provide --p-abs or a Static column with absolute Pa")
+        raise ValueError("Absolute static pressure required: provide Static (absolute) or Static_gauge + Baro")
 
-    # aggregate by replicate if provided
     frame = df_norm[["VP","Temperature"]].copy()
     if "Replicate" in df_norm.columns:
         g = df_norm.groupby("Replicate", as_index=False)[["VP","Temperature"]].mean()
@@ -173,13 +188,14 @@ def integrate_run(run_dir: Path, cfg: RunConfig, file_glob: str = "*.csv") -> di
     normalized_outdir = run_dir / "_integrated" / "normalized"
     for pf in port_files:
         raw = pd.read_csv(pf)
-        norm, meta = _normalize_df(raw)  # try repo unify; else aliases
+        norm, meta = _normalize_df(raw, cfg.p_abs_pa)  # try repo unify; else aliases
         normalize_meta[pf.name] = meta
         if cfg.emit_normalized:
             normalized_outdir.mkdir(parents=True, exist_ok=True)
             norm.to_csv(normalized_outdir / f"{pf.stem}.normalized.csv", index=False)
 
         vp, T_C, p_abs, notes = _reduce_port(norm, cfg)
+        notes["p_abs_source"] = meta.get("p_abs_source", "")
         rho = _rho(T_C, p_abs)
         v = np.sqrt(max(0.0, 2.0 * vp / rho)) if rho > 0 and vp >= 0 else float("nan")
         rows.append({"Port": pf.stem.upper(), "VP_pa": vp, "T_C": T_C, "rho_kg_m3": rho, "v_m_s": v, "p_abs_pa_used": p_abs, **notes})
