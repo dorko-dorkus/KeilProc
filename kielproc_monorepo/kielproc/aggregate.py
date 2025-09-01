@@ -151,7 +151,10 @@ class RunConfig:
 
 def _port_scalars_from_samples(norm: pd.DataFrame, replicate_strategy: str) -> dict:
     # per-sample density & velocity
-    T_K = norm["Temperature"].to_numpy(float) + 273.15
+    tC = norm["Temperature"].to_numpy(float)
+    if np.any(tC <= -273.15):
+        raise ValueError("Temperature at or below -273.15°C encountered")
+    T_K = tC + 273.15
     p_s = norm["Static_abs_Pa"].to_numpy(float)
     vp  = norm["VP"].to_numpy(float).clip(min=0.0)
     rho = p_s / (R * T_K)
