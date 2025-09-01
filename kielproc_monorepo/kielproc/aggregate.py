@@ -8,6 +8,14 @@ import pandas as pd
 # Matches P1, PORT 1, Port_1, Run07_P1, etc.
 PORT_RE = re.compile(r"(?i)(?<![0-9A-Za-z])P(?:ORT)?[ _]?([1-8])(?![0-9A-Za-z])")
 
+
+def _port_id(label: str) -> str:
+    """Return canonical port ID (``P1``..``P8``) from a filename or label."""
+    m = PORT_RE.search(str(label))
+    if not m:
+        raise ValueError(f"Cannot parse port identifier from {label!r}")
+    return f"P{m.group(1)}"
+
 R = 287.05  # J/(kg·K)
 
 # ——— Normalizer utilities ———
@@ -133,8 +141,12 @@ def _normalize_df(df_raw: pd.DataFrame, baro_cli_pa: float | None):
 class RunConfig:
     height_m: float
     width_m: float
-    weights: dict[str, float] | None = None    # keys like "PORT 1", must sum to 1.0 if provided
+    weights: dict[str, float] | None = None    # keys like "P1"; normalized via ``_port_id``
     replicate_strategy: str = "mean"           # "mean" or "last"
+
+    def __post_init__(self) -> None:
+        if self.weights:
+            self.weights = {_port_id(k): v for k, v in self.weights.items()}
 
 
 def _port_scalars_from_samples(norm: pd.DataFrame, replicate_strategy: str) -> dict:
@@ -159,8 +171,9 @@ def integrate_run(run_dir: Path, cfg: RunConfig, file_glob: str = "*.csv", baro_
                   area_ratio: float | None = None, beta: float | None = None) -> dict:
     """
     Reads port CSVs from ``run_dir`` whose names contain identifiers like
-    ``P1``, ``PORT 1``, ``Port_1`` or ``Run07_P1``.  Each file is normalized
-    and reduced per port before horizontal integration.  Returns
+    ``P1``, ``PORT 1``, ``Port_1`` or ``Run07_P1``.  Each file is normalized,
+    reduced per port and assigned a canonical ``P1``…``P8`` key before
+    horizontal integration.  Returns
     ``{'per_port': DataFrame, 'duct': dict, 'files': list, 'normalize_meta': dict_by_port}``.
     """
     run_dir = Path(run_dir)
@@ -178,8 +191,7 @@ def integrate_run(run_dir: Path, cfg: RunConfig, file_glob: str = "*.csv", baro_
         normalize_meta[pf.name] = meta
         scal = _port_scalars_from_samples(norm, cfg.replicate_strategy)
         # Determine normalized port key
-        m = PORT_RE.search(pf.stem)
-        port_key = f"PORT {m.group(1)}" if m else pf.stem.upper()
+        port_key = _port_id(pf.stem)
         # plane-wise means for audit context
         rows.append({
             "Port": port_key,
