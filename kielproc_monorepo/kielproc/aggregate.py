@@ -318,9 +318,13 @@ def integrate_run(
 
     # weights
     if cfg.weights:
+        # Start from provided weights (mapped to present ports), then renormalize
+        # over the actually present set so that missing ports are dropped gracefully.
         w = np.array([cfg.weights.get(p, 0.0) for p in per["Port"]], float)
-        if not np.isclose(w.sum(), 1.0):
-            raise ValueError("Port weights must sum to 1.0")
+        s = w.sum()
+        if s <= 0 or not np.isfinite(s):
+            raise ValueError("Provided weights are zero or invalid for the present ports")
+        w = w / s
     else:
         w = np.full(len(per), 1.0 / len(per))
 
