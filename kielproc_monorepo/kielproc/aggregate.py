@@ -5,6 +5,9 @@ import json, re
 import numpy as np
 import pandas as pd
 
+# Matches P1, PORT 1, Port_1, Run07_P1, etc.
+PORT_RE = re.compile(r"(?i)(?<![0-9A-Za-z])P(?:ORT)?[ _]?([1-8])(?![0-9A-Za-z])")
+
 R = 287.05  # J/(kg·K)
 
 # ——— Normalizer utilities ———
@@ -155,14 +158,16 @@ def _port_scalars_from_samples(norm: pd.DataFrame, replicate_strategy: str) -> d
 def integrate_run(run_dir: Path, cfg: RunConfig, file_glob: str = "*.csv", baro_cli_pa: float | None = None,
                   area_ratio: float | None = None, beta: float | None = None) -> dict:
     """
-    Reads 'PORT *.csv' style files from run_dir, normalizes, reduces per port, integrates horizontally.
-    Returns {'per_port': DataFrame, 'duct': dict, 'files': list, 'normalize_meta': dict_by_port}.
+    Reads port CSVs from ``run_dir`` whose names contain identifiers like
+    ``P1``, ``PORT 1``, ``Port_1`` or ``Run07_P1``.  Each file is normalized
+    and reduced per port before horizontal integration.  Returns
+    ``{'per_port': DataFrame, 'duct': dict, 'files': list, 'normalize_meta': dict_by_port}``.
     """
     run_dir = Path(run_dir)
-    # Prefer explicit PORT N files; fall back to any CSV with 'P[1-8]' in name.
-    port_files = sorted([p for p in run_dir.glob(file_glob) if re.search(r"\bP([1-8])\b", p.stem, flags=re.I)])
+    # Prefer explicit PORT N files; fall back to any CSV with port-like names.
+    port_files = sorted([p for p in run_dir.glob(file_glob) if PORT_RE.search(p.stem)])
     if not port_files:
-        port_files = sorted([p for p in run_dir.glob("*.csv") if re.search(r"\bP([1-8])\b", p.stem, flags=re.I)])
+        port_files = sorted([p for p in run_dir.glob("*.csv") if PORT_RE.search(p.stem)])
     if not port_files:
         raise FileNotFoundError(f"No port CSVs matching 'P1..P8' in {run_dir}")
 
@@ -172,9 +177,12 @@ def integrate_run(run_dir: Path, cfg: RunConfig, file_glob: str = "*.csv", baro_
         norm, meta = _normalize_df(raw, baro_cli_pa)
         normalize_meta[pf.name] = meta
         scal = _port_scalars_from_samples(norm, cfg.replicate_strategy)
+        # Determine normalized port key
+        m = PORT_RE.search(pf.stem)
+        port_key = f"PORT {m.group(1)}" if m else pf.stem.upper()
         # plane-wise means for audit context
         rows.append({
-            "Port": pf.stem.upper(),
+            "Port": port_key,
             "VP_pa_mean": float(pd.to_numeric(norm["VP"]).mean()),
             "T_C_mean": float(pd.to_numeric(norm["Temperature"]).mean()),
             "Static_abs_pa_mean": float(pd.to_numeric(norm["Static_abs_Pa"]).mean()),
