@@ -1,4 +1,4 @@
-# KeilProc
+# KielProc
 
 Comprehensive processing suite for differential pressure data from coal mill ducts using Kiel probes and legacy piccolo tubes.
 
@@ -25,17 +25,23 @@ python kielproc_monorepo/duct_dp_visualizer.py            # PySimpleGUI
 python kielproc_monorepo/duct_dp_visualizer.py --cli --help  # CLI options
 ```
 
+## Pre-start checks
+
+- Ports are weighted equally unless `weights.json` provides custom weights.
+- `geometry.json` in the run directory defines duct dimensions and is auto-discovered.
+- Provide an absolute static column or gauge + barometric; temperature must be in °C (> -273.15 °C) and values above 200 are treated as Kelvin.
+
 ## Windows installer
 
 ```bash
 cd kielproc_monorepo
-pyinstaller --noconsole --name KeilProc gui/app_gui.py
+pyinstaller --noconsole --name KielProc gui/app_gui.py
 cd ..
-ISCC tools/installer/keilproc.iss
+ISCC tools/installer/kielproc.iss
 ```
 
-The PyInstaller step writes `kielproc_monorepo/dist/KeilProc/KeilProc.exe`.
-The Inno Setup script creates `tools/installer/Output/KeilProcInstaller.exe`.
+The PyInstaller step writes `kielproc_monorepo/dist/KielProc/KielProc.exe`.
+The Inno Setup script creates `tools/installer/Output/KielProcInstaller.exe`.
 
 
 ## Features
