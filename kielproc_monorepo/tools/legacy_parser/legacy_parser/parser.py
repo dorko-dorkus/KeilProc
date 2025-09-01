@@ -6,7 +6,30 @@ import numpy as np
 import re, json, math
 from typing import Optional, List
 
-NUMERIC_FIELDS_CANON = ["Static", "VP", "Temperature", "Piccolo"]
+NUMERIC_FIELDS_CANON = ["Static", "Static_gauge", "VP", "Temperature", "Piccolo"]
+
+# SOP header/unit sanitation for legacy sheets:
+#  - If median(Temperature) > 200, convert from K → °C and keep header "Temperature".
+#  - If "Static" looks gauge: if median(Static) < 20 kPa, rename to "Static_gauge".
+#    Heuristic: if median < 200, assume kPa and scale ×1000 to Pa before the rename.
+def _sanitize_headers_and_units(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    # Kelvin-under-°C guard
+    if "Temperature" in out.columns:
+        t = pd.to_numeric(out["Temperature"], errors="coerce")
+        if t.notna().any() and float(np.nanmedian(t)) > 200.0:
+            out["Temperature"] = t - 273.15
+    # Gauge static rename + scaling
+    if "Static" in out.columns:
+        s = pd.to_numeric(out["Static"], errors="coerce")
+        if s.notna().any():
+            med = float(np.nanmedian(s))
+            if 0 < med < 200.0:   # likely kPa from legacy loggers
+                s = s * 1000.0
+            out["Static"] = s
+            if med < 20000.0:     # < 20 kPa after scaling → treat as gauge
+                out = out.rename(columns={"Static": "Static_gauge"})
+    return out
 
 
 @dataclass
@@ -186,6 +209,7 @@ def parse_legacy_workbook(
                 if m_temp: out["Temperature"] = df[m_temp]
                 if m_picc: out["Piccolo"] = df[m_picc]
 
+                out = _sanitize_headers_and_units(out)
                 key_cols = [c for c in ["Static", "VP", "Temperature", "Piccolo"] if c in out.columns]
                 if key_cols:
                     # Coerce to numeric so that any leaked headers or text such as
@@ -195,6 +219,9 @@ def parse_legacy_workbook(
                     mask_all_nan = out[key_cols].isna().all(axis=1)
                     out = out[~mask_all_nan]
                 out = out.copy()
+                # Write a numeric replicate index:
+                #  - Vertical P1..P8 sheets keep their sheet-suffix replicate if present
+                #  - Horizontal concatenation: each discovered column-group becomes a replicate
                 out.insert(0, "Sample", range(1, len(out)+1))
                 out["Workbook"] = xlsx_path.name
                 out["Sheet"] = sheet
@@ -251,7 +278,8 @@ def parse_legacy_workbook(
                 rows_acc = []
                 data_start = (unit_row or header_row) + 1
 
-                for a,b in zip(group_starts[:-1], group_starts[1:]):
+                # When columns repeat horizontally (Time/Static/VP again), treat each group as Replicate=1,2,...
+                for rep_idx, (a,b) in enumerate(zip(group_starts[:-1], group_starts[1:]), start=1):
                     sub_hdr = headers[a:b]
                     port_val = None
                     for off in range(0, min(5, len(sub_hdr))):
@@ -268,7 +296,7 @@ def parse_legacy_workbook(
                             continue
                         if any(_clean_name(v).startswith('average') for v in vals.values):
                             continue
-                        rec = {"Sample": r - data_start + 1, "Workbook": xlsx_path.name, "Sheet": sheet, "Replicate": ""}
+                        rec = {"Sample": r - data_start + 1, "Workbook": xlsx_path.name, "Sheet": sheet, "Replicate": rep_idx}
                         rec["Port"] = port_val
                         names = [str(n).strip().lower() for n in raw.iloc[header_row, a:b]]
                         for j,name in enumerate(names):
@@ -290,6 +318,7 @@ def parse_legacy_workbook(
 
                 if rows_acc:
                     out = pd.DataFrame(rows_acc)
+                    out = _sanitize_headers_and_units(out)
                     key_cols = [c for c in ["Static", "VP", "Temperature", "Piccolo"] if c in out.columns]
                     if key_cols:
                         for c in key_cols:
