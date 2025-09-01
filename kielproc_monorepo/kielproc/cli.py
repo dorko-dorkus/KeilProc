@@ -189,6 +189,8 @@ def main(argv=None):
             "files_used": res["files"],
             "pairs_used": [(pid, pf.name) for pid, pf in res.get("pairs", [])],
         }
+        if res.get("skipped"):
+            summary["skipped_files"] = [{"file": f, "reason": r} for f, r in res["skipped"]]
         if a.viz:
             from .visuals import render_velocity_heatmap
             lo, hi = (float(x) for x in a.viz_clip.split(","))
