@@ -191,6 +191,8 @@ class App(tk.Tk):
 
         # Translation section
         ttk.Label(frm, text="Legacy piccolo translation (lag removal + Deming α,β)").grid(row=row, column=0, sticky="w", **pad); row+=1
+        # expose an ingest function for Integration tab
+        self._ingest_reference_block_on_translate_tab = self._translate_ingest_reference_block
         self.var_blocks = tk.StringVar()
         self.var_refcol = tk.StringVar(value="mapped_ref")
         self.var_piccol = tk.StringVar(value="piccolo")
@@ -399,7 +401,8 @@ class App(tk.Tk):
         # Actions
         ttk.Button(frm, text="Discover Ports", command=self._discover_ports).grid(row=row, column=0, sticky="we", **pad)
         ttk.Button(frm, text="Run Integration", command=self._run_integration).grid(row=row, column=1, sticky="we", **pad)
-        ttk.Button(frm, text="Open Output Folder", command=self._open_out).grid(row=row, column=2, sticky="we", **pad); row += 1
+        ttk.Button(frm, text="Open Output Folder", command=self._open_out).grid(row=row, column=2, sticky="we", **pad)
+        ttk.Button(frm, text="Send to Translation", command=self._send_to_translation).grid(row=row, column=3, sticky="we", **pad); row += 1
 
         # Discovery and results panes
         self.txt_discovery = scrolledtext.ScrolledText(frm, height=6, width=100)
@@ -496,6 +499,27 @@ class App(tk.Tk):
             self._last_outdir = outdir
             self.var_summary.set("  ".join(summary) + f"   ->  outputs: {outdir}")
 
+            # build a light-weight reference block adapter for Translation
+            try:
+                # load duct_result so we can include q_s/q_t/delta_p if present
+                import json
+                duct = json.loads((outdir / "duct_result.json").read_text())
+                ref_block = {
+                    "block_name": run.name,
+                    "run_dir": str(run),
+                    "outdir": str(outdir),
+                    "per_port_csv": str(outdir / "per_port.csv"),
+                    "duct_result_json": str(outdir / "duct_result.json"),
+                    "q_s_pa": duct.get("q_s_pa"),
+                    "q_t_pa": duct.get("q_t_pa"),
+                    "delta_p_vent_est_pa": duct.get("delta_p_vent_est_pa"),
+                }
+                (outdir / "reference_block.json").write_text(json.dumps(ref_block, indent=2))
+                self._last_reference_block = outdir / "reference_block.json"
+            except Exception as e:
+                # non-fatal: Translation can still browse to the files manually
+                self._last_reference_block = None
+
             # visuals
             if self.var_viz.get():
                 try:
@@ -545,6 +569,29 @@ class App(tk.Tk):
                 subprocess.check_call(["xdg-open", str(p)])
         except Exception as e:
             messagebox.showerror("Open output", str(e))
+
+    def _send_to_translation(self):
+        try:
+            rb = getattr(self, "_last_reference_block", None)
+            if not rb or not Path(rb).exists():
+                messagebox.showinfo("Send to Translation", "Run Integration first so a reference block can be created.")
+                return
+            # require Translation tab to expose an ingest method
+            if not hasattr(self, "_ingest_reference_block_on_translate_tab"):
+                # locate a peer method if Translation tab is built as part of this class
+                if hasattr(self, "_translate_ingest_reference_block"):
+                    ingest = self._translate_ingest_reference_block
+                else:
+                    messagebox.showerror("Send to Translation", "Translation tab does not expose an ingest method.")
+                    return
+            else:
+                ingest = self._ingest_reference_block_on_translate_tab
+            # perform ingestion, then switch tabs
+            ingest(Path(rb))
+            self.nb.select(self.tab_phys)
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("Send to Translation", str(e))
 
     def _open_heatmap(self):
         try:
@@ -772,6 +819,57 @@ class App(tk.Tk):
             self.log("[OK] Results computed")
         except Exception as e:
             self.log(f"[ERROR] compute results: {e}\n{traceback.format_exc()}")
+
+    def _translate_ingest_reference_block(self, ref_json_path: Path):
+        """
+        Add a reference block row to the Translation tab using the integration outputs.
+        The JSON is produced by Integration and contains per_port.csv and duct_result.json paths.
+        """
+        import json
+        data = json.loads(Path(ref_json_path).read_text())
+        name = data.get("block_name") or Path(data.get("outdir", "")).parent.name
+        per_port = data.get("per_port_csv", "")
+        duct_json = data.get("duct_result_json", "")
+        q_s = data.get("q_s_pa", None)
+        q_t = data.get("q_t_pa", None)
+        dpv = data.get("delta_p_vent_est_pa", None)
+
+        if not hasattr(self, "blocks"):
+            self.blocks = []
+        self.blocks.append({
+            "name": name,
+            "reference_per_port_csv": per_port,
+            "reference_duct_json": duct_json,
+            "q_s_pa": q_s,
+            "q_t_pa": q_t,
+            "delta_p_vent_est_pa": dpv,
+        })
+
+        # update blocks entry string
+        entry = f"{name}={per_port}"
+        cur = self.var_blocks.get().strip()
+        if cur:
+            parts = [p.strip() for p in cur.split(",") if p.strip()]
+            if entry not in parts:
+                parts.append(entry)
+            self.var_blocks.set(", ".join(parts))
+        else:
+            self.var_blocks.set(entry)
+
+        tv = getattr(self, "tr_blocks", None)
+        if tv:
+            try:
+                tv.insert("", "end", values=(name, per_port, q_s if q_s is not None else "", q_t if q_t is not None else "", dpv if dpv is not None else ""))
+            except Exception:
+                try:
+                    tv.insert("", "end", values=(name, per_port))
+                except Exception:
+                    pass
+
+        if hasattr(self, "var_ref_path"):
+            self.var_ref_path.set(per_port)
+        if hasattr(self, "var_ref_meta"):
+            self.var_ref_meta.set(duct_json)
 
     def _do_flowmap(self):
         try:
