@@ -403,7 +403,14 @@ class App(tk.Tk):
         ttk.Button(frm, text="Discover Ports", command=self._discover_ports).grid(row=row, column=0, sticky="we", **pad)
         ttk.Button(frm, text="Run Integration", command=self._run_integration).grid(row=row, column=1, sticky="we", **pad)
         ttk.Button(frm, text="Open Output Folder", command=self._open_out).grid(row=row, column=2, sticky="we", **pad)
-        ttk.Button(frm, text="Send to Translation", command=self._send_to_translation).grid(row=row, column=3, sticky="we", **pad); row += 1
+        self.btn_send_to_translation = ttk.Button(
+            frm,
+            text="Send to Translation",
+            command=self._send_to_translation,
+            state="disabled",
+        )
+        self.btn_send_to_translation.grid(row=row, column=3, sticky="we", **pad)
+        row += 1
 
         # Discovery and results panes
         self.txt_discovery = scrolledtext.ScrolledText(frm, height=6, width=100)
@@ -474,37 +481,72 @@ class App(tk.Tk):
 
             cfg = RunConfig(height_m=H, width_m=W, weights=weights, replicate_strategy=rep)
             res = integrate_run(run, cfg, file_glob="*.csv", baro_cli_pa=baro_pa, area_ratio=r, beta=beta)
+            self._last_res = res  # keep in memory for linkage/recovery
 
             # populate table
-            for i in self.tree.get_children(): self.tree.delete(i)
+            for i in self.tree.get_children():
+                self.tree.delete(i)
             per = res["per_port"]
-            # DataFrame may be returned or path; handle both
             if hasattr(per, "to_dict"):
                 rows = per.to_dict(orient="records")
             else:
                 import pandas as pd
                 rows = pd.read_csv(run / "_integrated" / "per_port.csv").to_dict(orient="records")
             for row in rows:
-                vals = [row.get(k, "") for k in ("PortId","FileStem","VP_pa_mean","T_C_mean","Static_abs_pa_mean","v_m_s","rho_v_kg_m2_s","q_s_pa","p_abs_source","replicate_strategy")]
+                vals = [
+                    row.get(k, "")
+                    for k in (
+                        "PortId",
+                        "FileStem",
+                        "VP_pa_mean",
+                        "T_C_mean",
+                        "Static_abs_pa_mean",
+                        "v_m_s",
+                        "rho_v_kg_m2_s",
+                        "q_s_pa",
+                        "p_abs_source",
+                        "replicate_strategy",
+                    )
+                ]
                 self.tree.insert("", "end", values=vals)
 
             duct = res["duct"]
-            summary = [f"area_m2 = {duct.get('area_m2'):.6f}",
-                       f"v_bar_m_s = {duct.get('v_bar_m_s'):.6f}",
-                       f"Q_m3_s = {duct.get('Q_m3_s'):.6f}",
-                       f"m_dot_kg_s = {duct.get('m_dot_kg_s'):.6f}"]
-            if "q_s_pa" in duct: summary.append(f"q_s_pa = {duct.get('q_s_pa'):.3f}")
-            if "q_t_pa" in duct: summary.append(f"q_t_pa = {duct.get('q_t_pa'):.3f}")
-            if "delta_p_vent_est_pa" in duct: summary.append(f"Δp_vent_est_pa = {duct.get('delta_p_vent_est_pa'):.3f}")
+            summary = [
+                f"area_m2 = {duct.get('area_m2'):.6f}",
+                f"v_bar_m_s = {duct.get('v_bar_m_s'):.6f}",
+                f"Q_m3_s = {duct.get('Q_m3_s'):.6f}",
+                f"m_dot_kg_s = {duct.get('m_dot_kg_s'):.6f}",
+            ]
+            if "q_s_pa" in duct:
+                summary.append(f"q_s_pa = {duct.get('q_s_pa'):.3f}")
+            if "q_t_pa" in duct:
+                summary.append(f"q_t_pa = {duct.get('q_t_pa'):.3f}")
+            if "delta_p_vent_est_pa" in duct:
+                summary.append(f"Δp_vent_est_pa = {duct.get('delta_p_vent_est_pa'):.3f}")
             outdir = run / "_integrated"
+            outdir.mkdir(parents=True, exist_ok=True)
+            # persist artifacts synchronously
+            try:
+                import json
+
+                if hasattr(per, "to_csv"):
+                    per.to_csv(outdir / "per_port.csv", index=False)
+                (outdir / "duct_result.json").write_text(json.dumps(duct, indent=2))
+                (outdir / "normalize_meta.json").write_text(
+                    json.dumps(res.get("normalize_meta", {}), indent=2)
+                )
+            except Exception as e:
+                messagebox.showerror(
+                    "Persistence error", f"Failed to write outputs: {e}"
+                )
+                return
             self._last_outdir = outdir
             self.var_summary.set("  ".join(summary) + f"   ->  outputs: {outdir}")
 
             # build a light-weight reference block adapter for Translation
             try:
-                # load duct_result so we can include q_s/q_t/delta_p if present
                 import json
-                duct = json.loads((outdir / "duct_result.json").read_text())
+
                 ref_block = {
                     "block_name": run.name,
                     "run_dir": str(run),
@@ -515,9 +557,16 @@ class App(tk.Tk):
                     "q_t_pa": duct.get("q_t_pa"),
                     "delta_p_vent_est_pa": duct.get("delta_p_vent_est_pa"),
                 }
-                (outdir / "reference_block.json").write_text(json.dumps(ref_block, indent=2))
-                self._last_reference_block = outdir / "reference_block.json"
-            except Exception as e:
+                rb_path = outdir / "reference_block.json"
+                rb_path.write_text(json.dumps(ref_block, indent=2))
+                self._last_reference_block = rb_path
+                if hasattr(self, "btn_send_to_translation"):
+                    self.btn_send_to_translation.config(state="normal")
+                self.var_summary.set(
+                    "  ".join(summary)
+                    + f"   ->  outputs: {outdir}   reference_block.json ready"
+                )
+            except Exception:
                 # non-fatal: Translation can still browse to the files manually
                 self._last_reference_block = None
 
@@ -575,15 +624,42 @@ class App(tk.Tk):
         try:
             rb = getattr(self, "_last_reference_block", None)
             if not rb or not Path(rb).exists():
-                messagebox.showinfo("Send to Translation", "Run Integration first so a reference block can be created.")
-                return
+                # try to rebuild from last results
+                outdir = getattr(self, "_last_outdir", None)
+                res = getattr(self, "_last_res", None)
+                if outdir and res:
+                    import json
+
+                    duct = res.get("duct", {})
+                    ref_block = {
+                        "block_name": Path(outdir).parent.name,
+                        "run_dir": str(Path(outdir).parent),
+                        "outdir": str(outdir),
+                        "per_port_csv": str(Path(outdir) / "per_port.csv"),
+                        "duct_result_json": str(Path(outdir) / "duct_result.json"),
+                        "q_s_pa": duct.get("q_s_pa"),
+                        "q_t_pa": duct.get("q_t_pa"),
+                        "delta_p_vent_est_pa": duct.get("delta_p_vent_est_pa"),
+                    }
+                    rb_path = Path(outdir) / "reference_block.json"
+                    rb_path.write_text(json.dumps(ref_block, indent=2))
+                    self._last_reference_block = rb = rb_path
+                else:
+                    messagebox.showinfo(
+                        "Send to Translation",
+                        "Run Integration first so a reference block can be created.",
+                    )
+                    return
             # require Translation tab to expose an ingest method
             if not hasattr(self, "_ingest_reference_block_on_translate_tab"):
                 # locate a peer method if Translation tab is built as part of this class
                 if hasattr(self, "_translate_ingest_reference_block"):
                     ingest = self._translate_ingest_reference_block
                 else:
-                    messagebox.showerror("Send to Translation", "Translation tab does not expose an ingest method.")
+                    messagebox.showerror(
+                        "Send to Translation",
+                        "Translation tab does not expose an ingest method.",
+                    )
                     return
             else:
                 ingest = self._ingest_reference_block_on_translate_tab
