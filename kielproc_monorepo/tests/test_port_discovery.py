@@ -1,4 +1,5 @@
 import pandas as pd
+import math
 from kielproc.aggregate import integrate_run, RunConfig
 
 def _write_csv(path, vp=1.0):
@@ -40,3 +41,15 @@ def test_integrate_run_weight_key_variants(tmp_path):
         ("P1", "Run07_P1.csv"),
         ("P2", "PORT 2.csv"),
     ]
+
+
+def test_integrate_run_reweights_present_ports(tmp_path):
+    _write_csv(tmp_path / "P1.csv", vp=1.0)
+    _write_csv(tmp_path / "P2.csv", vp=4.0)
+    cfg = RunConfig(height_m=1.0, width_m=1.0, weights={"P1": 0.25, "P2": 0.25, "P3": 0.5})
+    res = integrate_run(tmp_path, cfg)
+    per = res["per_port"]
+    v1 = per.loc[per["Port"] == "P1", "v_m_s"].iloc[0]
+    v2 = per.loc[per["Port"] == "P2", "v_m_s"].iloc[0]
+    expected = 0.5 * v1 + 0.5 * v2
+    assert math.isclose(res["duct"]["v_bar_m_s"], expected)
