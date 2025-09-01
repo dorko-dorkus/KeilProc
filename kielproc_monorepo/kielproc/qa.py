@@ -9,7 +9,20 @@ DEFAULT_DELTA_OPP_MAX = 0.01
 
 
 def qa_indices(pN: float, pS: float, pE: float, pW: float, q_mean: float):
-    """Compute 90° wall-static quality indices.
+    """Compute opposing-port imbalance (Δ_opp) and swirl index (W).
+
+    QA indices used for acceptance gates (default Δ_opp ≤ 0.01·q_mean, W ≤ 0.002).
+
+    Formulas
+    --------
+    Δ_opp = max(|pN - pS|, |pE - pW|) / q_mean
+    W     = sqrt((pN - pS)^2 + (pE - pW)^2) / (2·q_mean)
+
+    Worked example
+    --------------
+    pN=151.0 Pa, pS=149.5 Pa, pE=150.3 Pa, pW=150.2 Pa, q_mean=300.0 Pa
+    Δ_opp = max(1.5, 0.1)/300 = 0.005
+    W     = sqrt(1.5^2 + 0.1^2)/(2·300) ≈ 0.0025
 
     Parameters
     ----------
