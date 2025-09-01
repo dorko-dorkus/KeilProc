@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from .io import load_legacy_excel, load_logger_csv, unify_schema
 from .physics import rho_from_pT, map_qs_to_qt, venturi_dp_from_qt
+from .aggregate import integrate_run, RunConfig
 from .translate import compute_translation_table, apply_translation
 from .lag import shift_series
 from .report import write_summary_tables, plot_alignment
@@ -53,6 +54,16 @@ def build_parser():
     i3.add_argument("--in-col", default="piccolo")
     i3.add_argument("--out-col", default="piccolo_translated")
     i3.add_argument("--out", required=True)
+
+    p4 = sub.add_parser("integrate-ports", help="Integrate PORT*.csv in a folder into duct results")
+    p4.add_argument("--run-dir", required=True, help="Directory containing port CSVs (filenames should include P1..P8)")
+    p4.add_argument("--duct-height", type=float, required=True)
+    p4.add_argument("--duct-width", type=float, required=True)
+    p4.add_argument("--p-abs", type=float, default=None, help="Absolute static pressure [Pa] if per-port absolute Static not present")
+    p4.add_argument("--weights-json", type=str, default=None, help='Optional JSON mapping, e.g. {"PORT 1":0.125,...}')
+    p4.add_argument("--replicate-strategy", choices=["mean","last"], default="mean")
+    p4.add_argument("--emit-normalized", action="store_true", help="Write normalized CSV snapshots for provenance")
+    p4.add_argument("--file-glob", default="*.csv", help="Custom glob if needed (default *.csv)")
     return p
 
 def main(argv=None):
@@ -141,6 +152,28 @@ def main(argv=None):
         print(json.dumps(result, indent=2))
         for row in per_block.itertuples():
             print(f"block={row.block} τ={row.lag_samples} r_peak={row.r_peak:.3f}")
+    elif a.cmd == "integrate-ports":
+        weights = json.loads(a.weights_json) if a.weights_json else None
+        cfg = RunConfig(
+            height_m=a.duct_height,
+            width_m=a.duct_width,
+            p_abs_pa=a.p_abs,
+            weights=weights,
+            replicate_strategy=a.replicate_strategy,
+            emit_normalized=a.emit_normalized,
+        )
+        res = integrate_run(Path(a.run_dir), cfg, file_glob=a.file_glob)
+        outdir = Path(a.run_dir) / "_integrated"
+        outdir.mkdir(parents=True, exist_ok=True)
+        res["per_port"].to_csv(outdir / "per_port.csv", index=False)
+        (outdir / "duct_result.json").write_text(json.dumps(res["duct"], indent=2))
+        (outdir / "normalize_meta.json").write_text(json.dumps(res["normalize_meta"], indent=2))
+        print(json.dumps({
+            "per_port_csv": str(outdir / "per_port.csv"),
+            "duct_result_json": str(outdir / "duct_result.json"),
+            "normalize_meta_json": str(outdir / "normalize_meta.json"),
+            "files_used": res["files"],
+        }, indent=2))
     elif a.cmd == "translate":
         df = pd.read_csv(a.csv)
         out = apply_translation(df, a.alpha, a.beta, src_col=a.in_col, out_col=a.out_col)
