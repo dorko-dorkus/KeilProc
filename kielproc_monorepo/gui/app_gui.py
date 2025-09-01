@@ -24,7 +24,7 @@ if str(ROOT) not in sys.path:
 # Adapter functions into the kielproc backend
 from kielproc_gui_adapter import (
     map_verification_plane, map_from_tot_and_static,
-    fit_alpha_beta, translate_piccolo,
+    fit_alpha_beta, fit_alpha_beta_from_block_csv, translate_piccolo,
     generate_flow_map_from_csv, generate_polar_slice_from_csv,
     legacy_results_from_csv, ResultsConfig
 )
@@ -234,6 +234,7 @@ class App(tk.Tk):
         ttk.Entry(qa_frm, textvariable=self.var_gate_w, width=10).grid(row=1, column=1, sticky="w", **pad)
 
         ttk.Button(frm, text="Fit α,β (with lag removal)", command=self._do_fit).grid(row=row, column=1, sticky="w", **pad); row+=1
+        ttk.Button(frm, text="Pick piccolo CSV → Fit", command=self._pick_and_fit_block).grid(row=row, column=1, sticky="w", **pad); row+=1
 
         # Apply translation
         ttk.Label(frm, text="Apply translation to a legacy CSV").grid(row=row, column=0, sticky="w", **pad); row+=1
@@ -771,6 +772,35 @@ class App(tk.Tk):
                 self.log(f"block={info['block']} τ={info['lag_samples']} r_peak={info['r_peak']:.3f}")
         except Exception as e:
             self.log(f"[ERROR] fit: {e}\n{traceback.format_exc()}")
+
+    def _pick_and_fit_block(self):
+        path = filedialog.askopenfilename(filetypes=[("CSV","*.csv")])
+        if not path:
+            return
+        try:
+            out = Path(self.var_outdir.get()); out.mkdir(parents=True, exist_ok=True)
+            qa_opp = float(self.var_gate_opp.get()) if self.var_gate_opp.get().strip() else None
+            qa_w = float(self.var_gate_w.get()) if self.var_gate_w.get().strip() else None
+            res = fit_alpha_beta_from_block_csv(
+                Path(path),
+                self.var_refcol.get(),
+                self.var_piccol.get(),
+                float(self.var_lambda.get()),
+                int(self.var_maxlag.get()),
+                out,
+                pN_col=self.var_pN.get(),
+                pS_col=self.var_pS.get(),
+                pE_col=self.var_pE.get(),
+                pW_col=self.var_pW.get(),
+                q_mean_col=self.var_qmean.get(),
+                qa_gate_opp=qa_opp,
+                qa_gate_w=qa_w,
+            )
+            self.log("[OK] Fitted α,β. Outputs: " + "; ".join([f"{k}={v}" for k, v in sorted(res.items()) if k != "blocks_info" and v]))
+            for info in res.get("blocks_info", []):
+                self.log(f"block={info['block']} τ={info['lag_samples']} r_peak={info['r_peak']:.3f}")
+        except Exception as e:
+            self.log(f"[ERROR] fit block: {e}\n{traceback.format_exc()}")
 
     def _do_translate(self):
         try:

@@ -157,6 +157,84 @@ def fit_alpha_beta(
         "blocks_info": per_block.to_dict(orient="records"),
     }
 
+def fit_alpha_beta_from_block_csv(
+    piccolo_csv: Union[Path, pd.DataFrame],
+    ref_col: str,
+    piccolo_col: str,
+    lambda_ratio: float,
+    max_lag: int,
+    outdir: Path,
+    *,
+    pN_col: str = "pN",
+    pS_col: str = "pS",
+    pE_col: str = "pE",
+    pW_col: str = "pW",
+    q_mean_col: str = "q_mean",
+    qa_gate_opp: float | None = DEFAULT_DELTA_OPP_MAX,
+    qa_gate_w: float | None = DEFAULT_W_MAX,
+) -> Dict[str, object]:
+    """Fit α,β from a piccolo CSV, locating reference data automatically.
+
+    The function searches for ``reference_block.json`` in the same directory as
+    ``piccolo_csv``.  If absent, it falls back to ``per_port.csv`` and
+    ``duct_result.json`` (either in the same directory or a ``_integrated``
+    subdirectory).  The discovered reference columns are combined with the
+    piccolo series and passed to :func:`fit_alpha_beta`.
+    """
+
+    p = Path(piccolo_csv)
+    df_picc = _df_from(p)
+    base = p.parent
+
+    ref_json = base / "reference_block.json"
+    ref_df = None
+    if ref_json.exists():
+        ref_df = pd.read_json(ref_json)
+    else:
+        per_csv = base / "per_port.csv"
+        duct_json = base / "duct_result.json"
+        if not per_csv.exists():
+            per_csv = base / "_integrated" / "per_port.csv"
+        if not duct_json.exists():
+            duct_json = base / "_integrated" / "duct_result.json"
+        if per_csv.exists() and duct_json.exists():
+            ref_df = pd.read_csv(per_csv)
+            import json
+            with open(duct_json) as fh:
+                duct = json.load(fh)
+            if len(ref_df) == 1:
+                ref_df = pd.concat([ref_df] * len(df_picc), ignore_index=True)
+            if q_mean_col not in ref_df.columns:
+                q_val = duct.get("q_s_pa") or duct.get("q_t_pa")
+                if q_val is not None:
+                    ref_df[q_mean_col] = np.full(len(ref_df), float(q_val))
+        else:
+            raise FileNotFoundError(
+                "Reference data not found alongside piccolo CSV; expected reference_block.json or per_port.csv and duct_result.json"
+            )
+
+    n = min(len(df_picc), len(ref_df))
+    df_combined = pd.concat(
+        [df_picc.iloc[:n].reset_index(drop=True), ref_df.iloc[:n].reset_index(drop=True)],
+        axis=1,
+    )
+    block_name = p.stem
+    return fit_alpha_beta(
+        {block_name: df_combined},
+        ref_col,
+        piccolo_col,
+        lambda_ratio,
+        max_lag,
+        outdir,
+        pN_col=pN_col,
+        pS_col=pS_col,
+        pE_col=pE_col,
+        pW_col=pW_col,
+        q_mean_col=q_mean_col,
+        qa_gate_opp=qa_gate_opp,
+        qa_gate_w=qa_gate_w,
+    )
+
 def translate_piccolo(csv_or_df: Union[Path, pd.DataFrame], alpha: float, beta: float,
                       piccolo_col: str, out_col: str, out_path: Path) -> Path:
     df = _df_from(csv_or_df)
