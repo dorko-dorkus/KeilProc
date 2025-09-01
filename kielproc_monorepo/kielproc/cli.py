@@ -59,11 +59,11 @@ def build_parser():
     p4.add_argument("--run-dir", required=True, help="Directory containing port CSVs (filenames should include P1..P8)")
     p4.add_argument("--duct-height", type=float, required=True)
     p4.add_argument("--duct-width", type=float, required=True)
-    p4.add_argument("--p-abs", type=float, default=None, help="Absolute static pressure [Pa] if per-port absolute Static not present")
+    p4.add_argument("--baro", type=float, default=None, help="Barometric [Pa] to combine with gauge Static if Baro column absent")
     p4.add_argument("--weights-json", type=str, default=None, help='Optional JSON mapping, e.g. {"PORT 1":0.125,...}')
     p4.add_argument("--replicate-strategy", choices=["mean","last"], default="mean")
-    p4.add_argument("--area-ratio", type=float, default=None, help="Optional area ratio r = As/At for DCS comparison")
-    p4.add_argument("--beta", type=float, default=None, help="Optional venturi beta = dt/D1 for DCS comparison")
+    p4.add_argument("--area-ratio", type=float, default=None, help="Downstream-to-throat area ratio r = A_s/A_t for q_t mapping")
+    p4.add_argument("--beta", type=float, default=None, help="Venturi diameter ratio β=d_t/D1 for Δp_vent estimate")
     p4.add_argument("--file-glob", default="*.csv", help="Custom glob if needed (default *.csv)")
     return p
 
@@ -165,7 +165,7 @@ def main(argv=None):
             Path(a.run_dir),
             cfg,
             file_glob=a.file_glob,
-            baro_cli_pa=a.p_abs,
+            baro_cli_pa=a.baro,
             area_ratio=a.area_ratio,
             beta=a.beta,
         )
