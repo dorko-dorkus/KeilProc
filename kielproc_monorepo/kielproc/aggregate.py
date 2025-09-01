@@ -228,6 +228,7 @@ def integrate_run(
         # plane-wise means for audit context
         rows.append({
             "Port": port_key,
+            "FileStem": pf.stem,
             "VP_pa_mean": float(pd.to_numeric(norm["VP"]).mean()),
             "T_C_mean": float(pd.to_numeric(norm["Temperature"]).mean()),
             "Static_abs_pa_mean": float(pd.to_numeric(norm["Static_abs_Pa"]).mean()),
