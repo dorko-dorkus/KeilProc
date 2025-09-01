@@ -62,7 +62,8 @@ def build_parser():
     p4.add_argument("--p-abs", type=float, default=None, help="Absolute static pressure [Pa] if per-port absolute Static not present")
     p4.add_argument("--weights-json", type=str, default=None, help='Optional JSON mapping, e.g. {"PORT 1":0.125,...}')
     p4.add_argument("--replicate-strategy", choices=["mean","last"], default="mean")
-    p4.add_argument("--emit-normalized", action="store_true", help="Write normalized CSV snapshots for provenance")
+    p4.add_argument("--area-ratio", type=float, default=None, help="Optional area ratio r = As/At for DCS comparison")
+    p4.add_argument("--beta", type=float, default=None, help="Optional venturi beta = dt/D1 for DCS comparison")
     p4.add_argument("--file-glob", default="*.csv", help="Custom glob if needed (default *.csv)")
     return p
 
@@ -157,12 +158,17 @@ def main(argv=None):
         cfg = RunConfig(
             height_m=a.duct_height,
             width_m=a.duct_width,
-            p_abs_pa=a.p_abs,
             weights=weights,
             replicate_strategy=a.replicate_strategy,
-            emit_normalized=a.emit_normalized,
         )
-        res = integrate_run(Path(a.run_dir), cfg, file_glob=a.file_glob)
+        res = integrate_run(
+            Path(a.run_dir),
+            cfg,
+            file_glob=a.file_glob,
+            baro_cli_pa=a.p_abs,
+            area_ratio=a.area_ratio,
+            beta=a.beta,
+        )
         outdir = Path(a.run_dir) / "_integrated"
         outdir.mkdir(parents=True, exist_ok=True)
         res["per_port"].to_csv(outdir / "per_port.csv", index=False)
