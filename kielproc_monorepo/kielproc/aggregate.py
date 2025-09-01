@@ -130,48 +130,30 @@ def _normalize_df(df_raw: pd.DataFrame, baro_cli_pa: float | None):
 class RunConfig:
     height_m: float
     width_m: float
-    p_abs_pa: float | None = None              # barometric pressure [Pa] if Static is gauge
     weights: dict[str, float] | None = None    # keys like "PORT 1", must sum to 1.0 if provided
     replicate_strategy: str = "mean"           # "mean" or "last"
-    emit_normalized: bool = False              # write normalized snapshots
 
-def _rho(T_C: float, p_abs: float) -> float:
-    return p_abs / (R * (T_C + 273.15))
 
-def _reduce_port(df_norm: pd.DataFrame, cfg: RunConfig) -> tuple[float,float,float,dict]:
-    """
-    Returns (VP_mean_Pa, T_C_mean, p_abs_Pa, notes).
-    Uses Static_abs_Pa if present; otherwise uses cfg.p_abs_pa.
-    Replicates, if present, are reduced by cfg.replicate_strategy.
-    """
-    if "VP" not in df_norm or "Temperature" not in df_norm:
-        raise ValueError("Normalized frame missing VP or Temperature")
+def _port_scalars_from_samples(norm: pd.DataFrame, replicate_strategy: str) -> dict:
+    # per-sample density & velocity
+    T_K = norm["Temperature"].to_numpy(float) + 273.15
+    p_s = norm["Static_abs_Pa"].to_numpy(float)
+    vp  = norm["VP"].to_numpy(float).clip(min=0.0)
+    rho = p_s / (R * T_K)
+    v   = np.sqrt(2.0 * vp / rho, where=rho>0, out=np.full_like(rho, np.nan))
+    rhov= rho * v
+    qs  = 0.5 * rho * v * v
 
-    notes = {}
-    if "Static_abs_Pa" in df_norm and df_norm["Static_abs_Pa"].notna().any():
-        p_abs = float(pd.to_numeric(df_norm["Static_abs_Pa"], errors="coerce").median())
-    elif cfg.p_abs_pa is not None:
-        p_abs = float(cfg.p_abs_pa)
+    df = pd.DataFrame({"v": v, "rhov": rhov, "qs": qs, "rep": norm.get("Replicate", pd.Series(index=norm.index, data=np.nan))})
+    if "Replicate" in norm.columns:
+        g = df.groupby("rep", dropna=True).mean(numeric_only=True)
+        row = g.iloc[-1] if replicate_strategy == "last" else g.mean()
     else:
-        raise ValueError("Absolute static pressure required: provide Static (absolute) or Static_gauge + Baro")
+        row = df.mean(numeric_only=True)
+    return {"v_m_s": float(row["v"]), "rho_v_kg_m2_s": float(row["rhov"]), "q_s_pa": float(row["qs"])}
 
-    frame = df_norm[["VP","Temperature"]].copy()
-    if "Replicate" in df_norm.columns:
-        g = df_norm.groupby("Replicate", as_index=False)[["VP","Temperature"]].mean()
-        if cfg.replicate_strategy == "last":
-            vp_mean = float(g["VP"].iloc[-1]); T_C = float(g["Temperature"].iloc[-1])
-            notes["replicate_strategy"] = "last"
-        else:
-            vp_mean = float(g["VP"].mean());   T_C = float(g["Temperature"].mean())
-            notes["replicate_strategy"] = "mean"
-    else:
-        vp_mean = float(pd.to_numeric(frame["VP"], errors="coerce").mean())
-        T_C     = float(pd.to_numeric(frame["Temperature"], errors="coerce").mean())
-        notes["replicate_strategy"] = "none"
-
-    return vp_mean, T_C, p_abs, notes
-
-def integrate_run(run_dir: Path, cfg: RunConfig, file_glob: str = "*.csv") -> dict:
+def integrate_run(run_dir: Path, cfg: RunConfig, file_glob: str = "*.csv", baro_cli_pa: float | None = None,
+                  area_ratio: float | None = None, beta: float | None = None) -> dict:
     """
     Reads 'PORT *.csv' style files from run_dir, normalizes, reduces per port, integrates horizontally.
     Returns {'per_port': DataFrame, 'duct': dict, 'files': list, 'normalize_meta': dict_by_port}.
@@ -185,41 +167,43 @@ def integrate_run(run_dir: Path, cfg: RunConfig, file_glob: str = "*.csv") -> di
         raise FileNotFoundError(f"No port CSVs matching 'P1..P8' in {run_dir}")
 
     rows, normalize_meta = [], {}
-    normalized_outdir = run_dir / "_integrated" / "normalized"
     for pf in port_files:
         raw = pd.read_csv(pf)
-        norm, meta = _normalize_df(raw, cfg.p_abs_pa)  # try repo unify; else aliases
+        norm, meta = _normalize_df(raw, baro_cli_pa)
         normalize_meta[pf.name] = meta
-        if cfg.emit_normalized:
-            normalized_outdir.mkdir(parents=True, exist_ok=True)
-            norm.to_csv(normalized_outdir / f"{pf.stem}.normalized.csv", index=False)
-
-        vp, T_C, p_abs, notes = _reduce_port(norm, cfg)
-        notes["p_abs_source"] = meta.get("p_abs_source", "")
-        rho = _rho(T_C, p_abs)
-        v = np.sqrt(max(0.0, 2.0 * vp / rho)) if rho > 0 and vp >= 0 else float("nan")
-        rows.append({"Port": pf.stem.upper(), "VP_pa": vp, "T_C": T_C, "rho_kg_m3": rho, "v_m_s": v, "p_abs_pa_used": p_abs, **notes})
-
+        scal = _port_scalars_from_samples(norm, cfg.replicate_strategy)
+        # plane-wise means for audit context
+        rows.append({
+            "Port": pf.stem.upper(),
+            "VP_pa_mean": float(pd.to_numeric(norm["VP"]).mean()),
+            "T_C_mean": float(pd.to_numeric(norm["Temperature"]).mean()),
+            "Static_abs_pa_mean": float(pd.to_numeric(norm["Static_abs_Pa"]).mean()),
+            **scal,
+            "p_abs_source": meta["p_abs_source"],
+            "replicate_strategy": (cfg.replicate_strategy if "Replicate" in norm.columns else "none"),
+        })
     per = pd.DataFrame(rows).sort_values("Port").reset_index(drop=True)
 
     # weights
     if cfg.weights:
         w = np.array([cfg.weights.get(p, 0.0) for p in per["Port"]], float)
-        if not np.isclose(w.sum(), 1.0):
-            raise ValueError("Port weights must sum to 1.0")
+        if not np.isclose(w.sum(), 1.0): raise ValueError("Port weights must sum to 1.0")
     else:
         w = np.full(len(per), 1.0/len(per))
 
-    # integration
     A = cfg.height_m * cfg.width_m
     v_bar = float(np.nansum(w * per["v_m_s"].to_numpy(float)))
-    mflux = float(np.nansum(w * per["rho_kg_m3"].to_numpy(float) * per["v_m_s"].to_numpy(float)))
+    mflux = float(np.nansum(w * per["rho_v_kg_m2_s"].to_numpy(float)))
     Q = A * v_bar
     m_dot = A * mflux
 
-    return {
-        "per_port": per,
-        "duct": {"v_bar_m_s": v_bar, "area_m2": A, "Q_m3_s": Q, "m_dot_kg_s": m_dot},
-        "files": [str(p.name) for p in port_files],
-        "normalize_meta": normalize_meta,
-    }
+    # Optional DCS comparison
+    out = {"v_bar_m_s": v_bar, "area_m2": A, "Q_m3_s": Q, "m_dot_kg_s": m_dot}
+    if area_ratio is not None:
+        q_s = float(np.nansum(w * per["q_s_pa"].to_numpy(float)))
+        q_t = (area_ratio**2) * q_s
+        out["q_s_pa"] = q_s
+        out["q_t_pa"] = q_t
+        if beta is not None:
+            out["delta_p_vent_est_pa"] = (1.0 - beta**4) * q_t
+    return {"per_port": per, "duct": out, "files": [p.name for p in port_files], "normalize_meta": normalize_meta}
