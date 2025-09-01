@@ -20,7 +20,15 @@ R = 287.05  # J/(kg·K)
 
 # ——— Normalizer utilities ———
 
-_VP_ALIASES = ["VP","Velocity Pressure","VelPress_Pa","q_dyn_Pa","VelPress_inH2O","VelPress_mmH2O"]
+_VP_ALIASES = [
+    "VP",
+    "Velocity Pressure",
+    "VelPress_Pa",
+    "q_dyn_Pa",
+    "VelPress_inH2O",
+    "VelPress_mmH2O",
+    "VelPress_cmH2O",
+]
 _T_ALIASES  = ["Temperature","Temp_C","Duct Air Temperature","T_C","Temp_F","Temperature_F"]
 _S_ALIASES  = [
     "Static",
@@ -28,6 +36,8 @@ _S_ALIASES  = [
     "P_static_Pa",
     "Static_kPa",
     "P_abs_Pa",
+    "Static_mbar",
+    "P_abs_mbar",
     "Static_gauge",
     "Static_g",
     "Gauge_Pa",
@@ -48,6 +58,10 @@ def _infer_unit_from_name(colname: str, default: str) -> str:
         return 'inH2O'
     if 'mmh2o' in nm:
         return 'mmH2O'
+    if 'cmh2o' in nm:
+        return 'cmH2O'
+    if 'mbar' in nm:
+        return 'mbar'
     if 'kpa' in nm:
         return 'kPa'
     if nm.endswith('_pa') or ' pa' in nm:
@@ -63,8 +77,12 @@ def _coerce(kind: str, series: pd.Series, unit_hint: str) -> pd.Series:
         return pd.to_numeric(series, errors="coerce") * 249.08891
     if kind == "VP" and unit_hint == "mmH2O":
         return pd.to_numeric(series, errors="coerce") * 9.80665
+    if kind == "VP" and unit_hint == "cmH2O":
+        return pd.to_numeric(series, errors="coerce") * 98.0665
     if unit_hint == "kPa":
         return pd.to_numeric(series, errors="coerce") * 1000.0
+    if unit_hint == "mbar":
+        return pd.to_numeric(series, errors="coerce") * 100.0
     if kind == "Temperature" and unit_hint == "F":
         return (pd.to_numeric(series, errors="coerce") - 32.0) * (5.0/9.0)
     return pd.to_numeric(series, errors="coerce")
