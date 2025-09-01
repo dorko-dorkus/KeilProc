@@ -1,20 +1,20 @@
 [Setup]
-AppName=KeilProc
+AppName=KielProc
 AppVersion=0.1.0
-AppVerName=KeilProc 0.1.0
-DefaultDirName="{pf}\KeilProc"
+AppVerName=KielProc 0.1.0
+DefaultDirName="{pf}\KielProc"
 DisableDirPage=no
-DefaultGroupName=KeilProc
-OutputBaseFilename=KeilProcInstaller
+DefaultGroupName=KielProc
+OutputBaseFilename=KielProcInstaller
 Compression=lzma
 SolidCompression=yes
 
 [Files]
-Source: "..\..\kielproc_monorepo\dist\KeilProc\KeilProc.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\kielproc_monorepo\dist\KielProc\KielProc.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\KeilProc"; Filename: "{app}\KeilProc.exe"
-Name: "{commondesktop}\KeilProc"; Filename: "{app}\KeilProc.exe"; Tasks: desktopicon
+Name: "{group}\KielProc"; Filename: "{app}\KielProc.exe"
+Name: "{commondesktop}\KielProc"; Filename: "{app}\KielProc.exe"; Tasks: desktopicon
 
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
