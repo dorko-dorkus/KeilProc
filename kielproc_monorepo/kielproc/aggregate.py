@@ -188,31 +188,43 @@ def _port_scalars_from_samples(norm: pd.DataFrame, replicate_strategy: str) -> d
         row = df.mean(numeric_only=True)
     return {"v_m_s": float(row["v"]), "rho_v_kg_m2_s": float(row["rhov"]), "q_s_pa": float(row["qs"])}
 
-def integrate_run(run_dir: Path, cfg: RunConfig, file_glob: str = "*.csv", baro_cli_pa: float | None = None,
-                  area_ratio: float | None = None, beta: float | None = None) -> dict:
+def integrate_run(
+    run_dir: Path,
+    cfg: RunConfig,
+    file_glob: str = "*.csv",
+    baro_cli_pa: float | None = None,
+    area_ratio: float | None = None,
+    beta: float | None = None,
+) -> dict:
     """
     Reads port CSVs from ``run_dir`` whose names contain identifiers like
     ``P1``, ``PORT 1``, ``Port_1`` or ``Run07_P1``.  Each file is normalized,
     reduced per port and assigned a canonical ``P1``…``P8`` key before
     horizontal integration.  Returns
-    ``{'per_port': DataFrame, 'duct': dict, 'files': list, 'normalize_meta': dict_by_port}``.
+    ``{'per_port': DataFrame, 'duct': dict, 'files': list, 'normalize_meta': dict_by_port, 'pairs': list[(PortId, Path)]}``.
     """
     run_dir = Path(run_dir)
-    # Prefer explicit PORT N files; fall back to any CSV with port-like names.
-    port_files = sorted([p for p in run_dir.glob(file_glob) if PORT_RE.search(p.stem)])
-    if not port_files:
-        port_files = sorted([p for p in run_dir.glob("*.csv") if PORT_RE.search(p.stem)])
-    if not port_files:
+    # Prefer explicit glob, fallback to any CSV with port-like names
+    pairs = sorted(
+        (_port_id(p.stem), p)
+        for p in run_dir.glob(file_glob)
+        if PORT_RE.search(p.stem)
+    )
+    if not pairs:
+        pairs = sorted(
+            (_port_id(p.stem), p)
+            for p in run_dir.glob("*.csv")
+            if PORT_RE.search(p.stem)
+        )
+    if not pairs:
         raise FileNotFoundError(f"No port CSVs matching 'P1..P8' in {run_dir}")
 
     rows, normalize_meta = [], {}
-    for pf in port_files:
+    for port_key, pf in pairs:
         raw = pd.read_csv(pf)
         norm, meta = _normalize_df(raw, baro_cli_pa)
         normalize_meta[pf.name] = meta
         scal = _port_scalars_from_samples(norm, cfg.replicate_strategy)
-        # Determine normalized port key
-        port_key = _port_id(pf.stem)
         # plane-wise means for audit context
         rows.append({
             "Port": port_key,
@@ -247,4 +259,10 @@ def integrate_run(run_dir: Path, cfg: RunConfig, file_glob: str = "*.csv", baro_
         out["q_t_pa"] = q_t
         if beta is not None:
             out["delta_p_vent_est_pa"] = (1.0 - beta**4) * q_t
-    return {"per_port": per, "duct": out, "files": [p.name for p in port_files], "normalize_meta": normalize_meta}
+    return {
+        "per_port": per,
+        "duct": out,
+        "files": [p.name for _, p in pairs],
+        "normalize_meta": normalize_meta,
+        "pairs": pairs,  # list[(PortId, Path)]
+    }

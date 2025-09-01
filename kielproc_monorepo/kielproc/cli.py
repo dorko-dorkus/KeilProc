@@ -178,12 +178,18 @@ def main(argv=None):
         res["per_port"].to_csv(outdir / "per_port.csv", index=False)
         (outdir / "duct_result.json").write_text(json.dumps(res["duct"], indent=2))
         (outdir / "normalize_meta.json").write_text(json.dumps(res["normalize_meta"], indent=2))
-        print(json.dumps({
-            "per_port_csv": str(outdir / "per_port.csv"),
-            "duct_result_json": str(outdir / "duct_result.json"),
-            "normalize_meta_json": str(outdir / "normalize_meta.json"),
-            "files_used": res["files"],
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "per_port_csv": str(outdir / "per_port.csv"),
+                    "duct_result_json": str(outdir / "duct_result.json"),
+                    "normalize_meta_json": str(outdir / "normalize_meta.json"),
+                    "files_used": res["files"],
+                    "pairs_used": [(pid, pf.name) for pid, pf in res.get("pairs", [])],
+                },
+                indent=2,
+            )
+        )
     elif a.cmd == "translate":
         df = pd.read_csv(a.csv)
         out = apply_translation(df, a.alpha, a.beta, src_col=a.in_col, out_col=a.out_col)

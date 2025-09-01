@@ -18,6 +18,12 @@ def test_integrate_run_port_name_variants(tmp_path):
     res = integrate_run(tmp_path, cfg)
     assert sorted(res["files"]) == sorted(names)
     assert res["per_port"]["Port"].tolist() == ["P1", "P2", "P3", "P4"]
+    assert [(pid, pf.name) for pid, pf in res["pairs"]] == [
+        ("P1", "P1.csv"),
+        ("P2", "PORT 2.csv"),
+        ("P3", "Port_3.csv"),
+        ("P4", "Run07_P4.csv"),
+    ]
 
 
 def test_integrate_run_weight_key_variants(tmp_path):
@@ -28,3 +34,7 @@ def test_integrate_run_weight_key_variants(tmp_path):
     assert cfg.weights == {"P1": 0.25, "P2": 0.75}
     res = integrate_run(tmp_path, cfg)
     assert res["per_port"]["Port"].tolist() == ["P1", "P2"]
+    assert [(pid, pf.name) for pid, pf in res["pairs"]] == [
+        ("P1", "Run07_P1.csv"),
+        ("P2", "PORT 2.csv"),
+    ]
