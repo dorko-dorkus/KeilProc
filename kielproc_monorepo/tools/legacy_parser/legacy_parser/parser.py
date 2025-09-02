@@ -14,11 +14,22 @@ NUMERIC_FIELDS_CANON = ["Static", "Static_gauge", "VP", "Temperature", "Piccolo"
 #    Heuristic: if median < 200, assume kPa and scale ×1000 to Pa before the rename.
 def _sanitize_headers_and_units(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    # Kelvin-under-°C guard
-    if "Temperature" in out.columns:
-        t = pd.to_numeric(out["Temperature"], errors="coerce")
-        if t.notna().any() and float(np.nanmedian(t)) > 200.0:
-            out["Temperature"] = t - 273.15
+    # Temperature unit sanitation (header-driven only):
+    # - If any temperature column explicitly indicates Kelvin, convert to °C and
+    #   write it to "Temperature". Otherwise leave values as-is (assume °C).
+    #   This avoids mis-converting true hot-duct temperatures (~200–400 °C).
+    t_cols = [c for c in out.columns if re.search(r"(?i)\btemp", c)]
+    for c in t_cols:
+        if re.search(r"(?i)\b(kelvin|\(k\)|_k\b|\bk\b)", c):
+            out["Temperature"] = pd.to_numeric(out[c], errors="coerce") - 273.15
+            if c != "Temperature":
+                # keep a single canonical column
+                try:
+                    out.drop(columns=[c], inplace=True)
+                except Exception:
+                    pass
+            break
+    # If no explicit Kelvin hint was found, do nothing; downstream expects °C.
     # Gauge static rename + scaling
     if "Static" in out.columns:
         s = pd.to_numeric(out["Static"], errors="coerce")

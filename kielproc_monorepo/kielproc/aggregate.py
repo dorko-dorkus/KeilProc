@@ -264,6 +264,9 @@ def _port_scalars_from_samples(norm: pd.DataFrame, replicate_strategy: str) -> d
     tC = norm["Temperature"].to_numpy(float)
     if np.any(tC <= -273.15):
         raise ValueError("Temperature at or below -273.15°C encountered")
+    # Heuristic: if median °C is near 0 or extremely hot, units may be wrong
+    if np.nanmedian(tC) < -30 or np.nanmedian(tC) > 650:
+        raise ValueError("Temperature °C looks implausible for this campaign; check units/legacy parse")
     T_K = tC + 273.15
     p_s = norm["Static_abs_Pa"].to_numpy(float)
     vp  = norm["VP"].to_numpy(float).clip(min=0.0)
