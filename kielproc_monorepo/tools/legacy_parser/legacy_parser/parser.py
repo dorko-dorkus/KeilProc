@@ -9,37 +9,55 @@ from typing import Optional, List
 NUMERIC_FIELDS_CANON = ["Static", "Static_gauge", "VP", "Temperature", "Piccolo"]
 
 # SOP header/unit sanitation for legacy sheets:
-#  - If median(Temperature) > 200, convert from K → °C and keep header "Temperature".
-#  - If "Static" looks gauge: if median(Static) < 20 kPa, rename to "Static_gauge".
-#    Heuristic: if median < 200, assume kPa and scale ×1000 to Pa before the rename.
+# - Temperature: convert from K → °C only if indicated by header tokens.
+# - Static/Baro: convert units and gauge/absolute based solely on headers.
+
 def _sanitize_headers_and_units(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    # Temperature unit sanitation (header-driven only):
-    # - If any temperature column explicitly indicates Kelvin, convert to °C and
-    #   write it to "Temperature". Otherwise leave values as-is (assume °C).
-    #   This avoids mis-converting true hot-duct temperatures (~200–400 °C).
-    t_cols = [c for c in out.columns if re.search(r"(?i)\btemp", c)]
-    for c in t_cols:
-        if re.search(r"(?i)\b(kelvin|\(k\)|_k\b|\bk\b)", c):
-            out["Temperature"] = pd.to_numeric(out[c], errors="coerce") - 273.15
-            if c != "Temperature":
-                # keep a single canonical column
-                try:
-                    out.drop(columns=[c], inplace=True)
-                except Exception:
-                    pass
-            break
-    # If no explicit Kelvin hint was found, do nothing; downstream expects °C.
-    # Gauge static rename + scaling
-    if "Static" in out.columns:
-        s = pd.to_numeric(out["Static"], errors="coerce")
-        if s.notna().any():
-            med = float(np.nanmedian(s))
-            if 0 < med < 200.0:   # likely kPa from legacy loggers
-                s = s * 1000.0
-            out["Static"] = s
-            if med < 20000.0:     # < 20 kPa after scaling → treat as gauge
-                out = out.rename(columns={"Static": "Static_gauge"})
+    # Temperature: header-driven only (no magnitude heuristic). If header indicates K, convert to °C.
+    for c in list(out.columns):
+        if re.search(r"(?i)\btemp", c):
+            if re.search(r"(?i)(kelvin|\(k\)|_k\b|\bk\b)", c):
+                out["Temperature"] = pd.to_numeric(out[c], errors="coerce") - 273.15
+                if c != "Temperature":
+                    try:
+                        out.drop(columns=[c], inplace=True)
+                    except Exception:
+                        pass
+                break
+    # Static: header-driven units and gauge/absolute only (no magnitude heuristic).
+    def _unit_scale(colname: str) -> float:
+        nm = colname.lower()
+        if "kpa" in nm:
+            return 1000.0
+        if "mbar" in nm or "mb" in nm:
+            return 100.0
+        if re.search(r"(?<![a-z])bar(?!o)", nm):
+            return 100000.0
+        if nm.endswith("_pa") or " pa" in nm:
+            return 1.0
+        return 1.0  # default → assume Pa if unlabeled
+    # Normalize Static/Baro columns by header; mark gauge by header tokens only.
+    if "Static" in out.columns or any(re.search(r"(?i)static", c) for c in out.columns):
+        # Find the best static column; prefer explicit gauge headers to preserve semantics.
+        st_cols = [c for c in out.columns if re.search(r"(?i)\bstatic", c)]
+        # If there's a header with 'gauge' or '_g', treat that as Static_gauge; else use 'Static' as absolute.
+        gauge_cols = [c for c in st_cols if re.search(r"(?i)gauge|\b_g\b", c)]
+        if gauge_cols:
+            c = gauge_cols[0]
+            out["Static_gauge"] = pd.to_numeric(out[c], errors="coerce") * _unit_scale(c)
+        elif "Static" in out.columns:
+            out["Static"] = pd.to_numeric(out["Static"], errors="coerce") * _unit_scale("Static")
+        # else: leave other static-like columns untouched; the integrator will alias/normalize.
+    if any(re.search(r"(?i)\bbaro|barometric|ambient", c) for c in out.columns):
+        for c in list(out.columns):
+            if re.search(r"(?i)\bbaro|barometric|ambient", c):
+                out["Baro"] = pd.to_numeric(out[c], errors="coerce") * _unit_scale(c)
+                if c != "Baro":
+                    try:
+                        out.drop(columns=[c], inplace=True)
+                    except Exception:
+                        pass
     return out
 
 
