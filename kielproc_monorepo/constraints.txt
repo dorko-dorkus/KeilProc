@@ -47,6 +47,10 @@ pytz==2025.2
     # via pandas
 six==1.17.0
     # via python-dateutil
+tk==0.1.0
+    # via
+    #   -r requirements.txt
+    #   kielproc-suite (pyproject.toml)
 tzdata==2025.2
     # via pandas
 xlrd==1.2.0
