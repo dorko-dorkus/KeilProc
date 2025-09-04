@@ -15,6 +15,11 @@ import math
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import pandas as pd
+# Ensure repo root is importable when running as "python gui/app_gui.py"
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from ui_polish import (
     apply_style,
     make_statusbar,
@@ -23,11 +28,6 @@ from ui_polish import (
     vcmd_float,
     labeled_row,
 )
-
-# Ensure repo root is importable when running as "python gui/app_gui.py"
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 # Adapter functions into the kielproc backend
 from kielproc_gui_adapter import (
