@@ -4,6 +4,7 @@ Thin adapter for Tk GUI -> kielproc library
 Provides simple functions with file-path I/O to avoid heavy refactors.
 """
 from pathlib import Path
+import json
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple, Union
@@ -20,6 +21,8 @@ from kielproc.geometry import (
     r_ratio,
     beta_from_geometry,
 )
+from kielproc.io import unify_schema
+from kielproc.setpoints import find_optimal_transmitter_span
 from kielproc.legacy_results import ResultsConfig, compute_results as compute_legacy_results
 
 
@@ -351,3 +354,49 @@ def generate_polar_slice_from_csv(data_csv_or_df: Union[Path, pd.DataFrame], the
     png = plot_polar_slice_wall(outdir, th, vals, R=R, band=band,
                                 title=f"Wall static deviation at {plane_col}={plane_value}", stem="polar_slice", norm_by=norm_val)
     return {"polar_slice_png": png, "R_m": R}
+
+
+def compute_setpoints(
+    csv_or_df: Union[Path, pd.DataFrame],
+    x_col: str = "i/p",
+    y_col: str = "820",
+    *,
+    min_fraction_of_range: float = 0.6,
+    slope_sign: int = +1,
+    use_unify_schema: bool = False,
+    out_json: Path | None = None,
+    out_csv: Path | None = None,
+) -> Dict[str, object]:
+    """Compute transmitter setpoints from logger data.
+
+    Parameters mirror :func:`kielproc.setpoints.find_optimal_transmitter_span`.
+    If *out_json* or *out_csv* is provided, the setpoint mapping is written to
+    disk in JSON or CSV form respectively.  Returns a small dictionary with
+    the resulting mapping and output file paths.
+    """
+
+    df = _df_from(csv_or_df)
+    if use_unify_schema:
+        df = unify_schema(df)
+    x = pd.to_numeric(df[x_col], errors="coerce").to_numpy(float)
+    y = pd.to_numeric(df[y_col], errors="coerce").to_numpy(float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    opt = find_optimal_transmitter_span(
+        x[mask],
+        y[mask],
+        min_fraction_of_range=min_fraction_of_range,
+        slope_sign=slope_sign,
+    )
+    if out_json is not None:
+        out_json.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_json, "w") as fh:
+            json.dump(opt.setpoints, fh, indent=2)
+    if out_csv is not None:
+        out_csv.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(opt.setpoints["mapping"]).to_csv(out_csv, index=False)
+    return {
+        "optimal_span": opt.setpoints,
+        "json": str(out_json) if out_json else "",
+        "csv": str(out_csv) if out_csv else "",
+    }
+

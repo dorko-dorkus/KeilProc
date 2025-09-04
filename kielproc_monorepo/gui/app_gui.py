@@ -23,10 +23,16 @@ if str(ROOT) not in sys.path:
 
 # Adapter functions into the kielproc backend
 from kielproc_gui_adapter import (
-    map_verification_plane, map_from_tot_and_static,
-    fit_alpha_beta, fit_alpha_beta_from_block_csv, translate_piccolo,
-    generate_flow_map_from_csv, generate_polar_slice_from_csv,
-    legacy_results_from_csv, ResultsConfig
+    map_verification_plane,
+    map_from_tot_and_static,
+    fit_alpha_beta,
+    fit_alpha_beta_from_block_csv,
+    translate_piccolo,
+    generate_flow_map_from_csv,
+    generate_polar_slice_from_csv,
+    legacy_results_from_csv,
+    ResultsConfig,
+    compute_setpoints,
 )
 from kielproc.aggregate import integrate_run, RunConfig
 from kielproc.legacy_results import compute_results as compute_results_cli
@@ -92,6 +98,10 @@ class App(tk.Tk):
         self.tab_phys = ScrollableFrame(self.nb)
         self.nb.add(self.tab_phys, text="Physics / Translation")
         self._build_phys(self.tab_phys.inner)
+
+        self.tab_setpoints = ScrollableFrame(self.nb)
+        self.nb.add(self.tab_setpoints, text="Setpoints")
+        self._build_setpoints(self.tab_setpoints.inner)
 
         self.tab_results = ScrollableFrame(self.nb)
         self.nb.add(self.tab_results, text="Results")
@@ -305,6 +315,49 @@ class App(tk.Tk):
         # Log box
         self.txt = scrolledtext.ScrolledText(frm, height=12)
         self.txt.grid(row=row, column=0, columnspan=4, sticky="nsew", **pad)
+        frm.grid_rowconfigure(row, weight=1); frm.grid_columnconfigure(1, weight=1)
+
+    def _build_setpoints(self, frm):
+        pad = {"padx": 6, "pady": 4}
+        row = 0
+        ttk.Label(frm, text="Compute transmitter setpoints from a logger CSV").grid(row=row, column=0, columnspan=4, sticky="w", **pad); row+=1
+
+        self.var_sp_csv = tk.StringVar()
+        ttk.Label(frm, text="Logger CSV").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_sp_csv, width=56).grid(row=row, column=1, **pad)
+        ttk.Button(frm, text="Browse", command=lambda: self._pick(self.var_sp_csv, [("CSV","*.csv")])).grid(row=row, column=2, **pad); row+=1
+
+        self.var_sp_x_col = tk.StringVar(value="i/p")
+        self.var_sp_y_col = tk.StringVar(value="820")
+        ttk.Label(frm, text="x column").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_sp_x_col, width=20).grid(row=row, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="y column").grid(row=row, column=2, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_sp_y_col, width=20).grid(row=row, column=3, sticky="w", **pad); row+=1
+
+        self.var_sp_min_frac = tk.StringVar(value="0.6")
+        self.var_sp_slope = tk.StringVar(value="positive")
+        ttk.Label(frm, text="min frac range").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_sp_min_frac, width=10).grid(row=row, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="slope").grid(row=row, column=2, sticky="e", **pad)
+        ttk.Combobox(frm, textvariable=self.var_sp_slope, values=["positive","negative","any"], width=12, state="readonly").grid(row=row, column=3, sticky="w", **pad); row+=1
+
+        self.var_sp_unify = tk.BooleanVar(value=False)
+        ttk.Checkbutton(frm, text="Unify column names", variable=self.var_sp_unify).grid(row=row, column=0, columnspan=2, sticky="w", **pad); row+=1
+
+        self.var_sp_json = tk.StringVar()
+        ttk.Label(frm, text="JSON out (opt)").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_sp_json, width=56).grid(row=row, column=1, **pad)
+        ttk.Button(frm, text="Browse", command=lambda: self._save_as(self.var_sp_json, [("JSON","*.json")])).grid(row=row, column=2, **pad); row+=1
+
+        self.var_sp_csv_out = tk.StringVar()
+        ttk.Label(frm, text="CSV out (opt)").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_sp_csv_out, width=56).grid(row=row, column=1, **pad)
+        ttk.Button(frm, text="Browse", command=lambda: self._save_as(self.var_sp_csv_out, [("CSV","*.csv")])).grid(row=row, column=2, **pad); row+=1
+
+        ttk.Button(frm, text="Compute Setpoints", command=self._compute_setpoints).grid(row=row, column=1, sticky="w", **pad); row+=1
+
+        self.txt_setpoints = scrolledtext.ScrolledText(frm, height=20)
+        self.txt_setpoints.grid(row=row, column=0, columnspan=4, sticky="nsew", **pad)
         frm.grid_rowconfigure(row, weight=1); frm.grid_columnconfigure(1, weight=1)
 
     def _build_results(self, frm):
@@ -901,6 +954,27 @@ class App(tk.Tk):
             self.log("[OK] Results: " + "; ".join(f"{k}={v}" for k,v in res.items()))
         except Exception as e:
             self.log(f"[ERROR] results: {e}\n{traceback.format_exc()}")
+
+    def _compute_setpoints(self):
+        try:
+            out_json = Path(self.var_sp_json.get()) if self.var_sp_json.get() else None
+            out_csv = Path(self.var_sp_csv_out.get()) if self.var_sp_csv_out.get() else None
+            slope_sign = {"positive": +1, "negative": -1, "any": 0}.get(self.var_sp_slope.get(), +1)
+            res = compute_setpoints(
+                Path(self.var_sp_csv.get()),
+                self.var_sp_x_col.get(),
+                self.var_sp_y_col.get(),
+                min_fraction_of_range=float(self.var_sp_min_frac.get()),
+                slope_sign=slope_sign,
+                use_unify_schema=self.var_sp_unify.get(),
+                out_json=out_json,
+                out_csv=out_csv,
+            )
+            self.txt_setpoints.delete("1.0", "end")
+            self.txt_setpoints.insert("end", json.dumps(res["optimal_span"], indent=2))
+            self.log("[OK] Setpoints computed")
+        except Exception as e:
+            self.log(f"[ERROR] setpoints: {e}\n{traceback.format_exc()}")
 
     def _compute_results(self):
         try:
