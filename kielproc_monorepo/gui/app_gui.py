@@ -59,6 +59,33 @@ from kielproc.geometry import (
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 
+def _float_or_zero(value: str, default: float = 0.0) -> float:
+    """Convert *value* to float, returning *default* when empty.
+
+    Parameters
+    ----------
+    value:
+        The string representation of the float value.  If ``value`` is an
+        empty string, *default* is returned instead of raising ``ValueError``.
+    default:
+        The value to use when ``value`` is empty.  Defaults to 0.0.
+
+    Returns
+    -------
+    float
+        The converted floating point number.
+
+    Raises
+    ------
+    ValueError
+        If ``value`` is non-empty and cannot be converted to float.
+    """
+
+    if value == "":
+        return default
+    return float(value)
+
+
 class ScrollableFrame(ttk.Frame):
     """A simple scrollable frame container using a canvas and vertical scrollbar."""
 
@@ -1051,8 +1078,16 @@ class App(tk.Tk):
     def _do_translate(self):
         try:
             out = Path(self.var_outdir.get())/"translated.csv"
-            res = translate_piccolo(Path(self.var_tr_csv.get()), float(self.var_alpha.get()),
-                                    float(self.var_beta.get()), self.var_piccol.get(), "piccolo_translated", out)
+            alpha = _float_or_zero(self.var_alpha.get())
+            beta = _float_or_zero(self.var_beta.get())
+            res = translate_piccolo(
+                Path(self.var_tr_csv.get()),
+                alpha,
+                beta,
+                self.var_piccol.get(),
+                "piccolo_translated",
+                out,
+            )
             self.log(f"[OK] Wrote {res}")
         except Exception as e:
             self.log(f"[ERROR] translate: {e}\n{traceback.format_exc()}")
