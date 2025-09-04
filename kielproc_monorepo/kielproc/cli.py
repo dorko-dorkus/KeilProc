@@ -11,10 +11,27 @@ from .translate import compute_translation_table, apply_translation
 from .lag import shift_series
 from .report import write_summary_tables, plot_alignment
 from .legacy_results import ResultsConfig, compute_results as compute_legacy_results
+from .run_easy import run_easy_legacy, SitePreset
+
+PRESETS = {
+    # In a real deployment these would be loaded from an external presets file.
+    "DefaultSite": SitePreset(
+        name="DefaultSite",
+        geometry={"duct_diameter_m": 2.5, "ports": 8, "weighting": "equal"},
+        instruments={"vp_unit": "Pa", "temp_unit": "C"},
+        defaults={"fallback_baro_Pa": 101325},
+    )
+}
 
 def build_parser():
     p = argparse.ArgumentParser(prog="kielproc", description="Kiel + wall-static baseline & legacy translation")
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    oc = sub.add_parser("one-click", help="Process legacy worksheets to full SOP outputs")
+    oc.add_argument("src", type=Path, help="Workbook file or directory of workbooks")
+    oc.add_argument("--site", default="DefaultSite", choices=PRESETS.keys())
+    oc.add_argument("--baro", type=float, default=None, help="Override barometric pressure in Pa")
+    oc.add_argument("--stamp", type=str, default=None, help="Override run stamp YYYYMMDD_HHMM (NZT)")
 
     i0 = sub.add_parser("results", help="Compute legacy-style results from a logger CSV")
     i0.add_argument("--csv", required=True, help="Input logger CSV path")
@@ -90,7 +107,10 @@ def build_parser():
 def main(argv=None):
     ap = build_parser()
     a = ap.parse_args(argv)
-    if a.cmd == "results":
+    if a.cmd == "one-click":
+        out = run_easy_legacy(Path(a.src), PRESETS[a.site], baro_override_Pa=a.baro, run_stamp=a.stamp)
+        print(json.dumps({"ok": True, "out_dir": str(out)}))
+    elif a.cmd == "results":
         cfg_dict = {}
         if a.config:
             with open(a.config) as fh:
