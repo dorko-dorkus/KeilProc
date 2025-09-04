@@ -6,6 +6,8 @@ from kielproc_gui_adapter import (
     translate_piccolo,
     legacy_results_from_csv,
     compute_setpoints,
+    process_legacy_parsed_csv,
+    make_actual_vs_linearized_plot,
 )
 from kielproc.legacy_results import ResultsConfig
 
@@ -55,3 +57,19 @@ def test_compute_setpoints_from_dataframe(tmp_path: Path):
     assert res["optimal_span"]["span"]["mA_low"] == 4.0
     mapping = pd.read_csv(csv_path)
     assert set(mapping.columns) == {"pct", "x", "mA"}
+
+
+def test_process_legacy_parsed_csv(tmp_path: Path):
+    df = pd.DataFrame({"VP": [1.0, 2.0, 3.0]})
+    geom = Geometry(duct_height_m=1.0, duct_width_m=1.0, throat_diameter_m=0.1)
+    out = tmp_path / "legacy_qs_qp_dpvent.csv"
+    wrote, res_df = process_legacy_parsed_csv(df, geom, None, out)
+    assert wrote == out
+    assert out.exists()
+    assert {"qp", "deltpVent"}.issubset(res_df.columns)
+
+
+def test_make_actual_vs_linearized_plot():
+    df = pd.DataFrame({"qp": [0.0, 1.0, 2.0], "deltpVent": [0.1, 1.1, 2.1]})
+    fig = make_actual_vs_linearized_plot(df)
+    assert fig is not None

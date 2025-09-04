@@ -42,6 +42,8 @@ from kielproc_gui_adapter import (
     legacy_results_from_csv,
     ResultsConfig,
     compute_setpoints,
+    process_legacy_parsed_csv,
+    make_actual_vs_linearized_plot,
 )
 from kielproc.aggregate import integrate_run, RunConfig
 from kielproc.legacy_results import compute_results as compute_results_cli
@@ -54,6 +56,7 @@ from kielproc.geometry import (
     r_ratio,
     beta_from_geometry,
 )
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 
 class ScrollableFrame(ttk.Frame):
@@ -203,6 +206,21 @@ class App(tk.Tk):
         ttk.Label(frm, text="Output dir").grid(row=row, column=2, sticky="e", **pad)
         ttk.Entry(frm, textvariable=self.var_outdir, width=36).grid(row=row, column=3, sticky="w", **pad); row+=1
         ttk.Button(frm, text="Map qs→qt→Δp_vent", command=self._do_map).grid(row=row, column=1, sticky="w", **pad); row+=1
+
+        ttk.Separator(frm, orient="horizontal").grid(row=row, column=0, columnspan=4, sticky="ew", **pad); row+=1
+
+        ttk.Label(frm, text="Legacy parsed CSV → qs→qp→ΔpVent").grid(row=row, column=0, sticky="w", **pad); row+=1
+        self.var_legacy_csv = tk.StringVar()
+        self.var_legacy_qs_col = tk.StringVar(value="VP")
+        self.var_lin_tol = tk.StringVar(value="0.01")  # relative error threshold for "ideal" region
+        ttk.Label(frm, text="Legacy CSV").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_legacy_csv, width=50).grid(row=row, column=1, sticky="we", **pad)
+        ttk.Button(frm, text="Browse", command=lambda: self._pick(self.var_legacy_csv, [("CSV","*.csv")])).grid(row=row, column=2, **pad); row+=1
+        ttk.Label(frm, text="qs column").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_legacy_qs_col, width=20).grid(row=row, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="lin tol (rel)").grid(row=row, column=2, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self.var_lin_tol, width=10).grid(row=row, column=3, sticky="w", **pad); row+=1
+        ttk.Button(frm, text="Process legacy CSV", command=self._do_process_legacy).grid(row=row, column=1, sticky="w", **pad); row+=1
 
         ttk.Separator(frm, orient="horizontal").grid(row=row, column=0, columnspan=4, sticky="ew", **pad); row+=1
 
@@ -907,6 +925,66 @@ class App(tk.Tk):
             self.log(f"[OK] Wrote {mapped}")
         except Exception as e:
             self.log(f"[ERROR] map: {e}\n{traceback.format_exc()}")
+
+    def _do_process_legacy(self):
+        try:
+            geom = self._get_geometry()
+            outdir = Path(self.var_outdir.get()); outdir.mkdir(parents=True, exist_ok=True)
+            out = outdir / "legacy_qs_qp_dpvent.csv"
+            fs = float(self.var_fs.get()) if self.var_fs.get().strip() else None
+            wrote, df = process_legacy_parsed_csv(
+                Path(self.var_legacy_csv.get()),
+                geom,
+                fs,
+                out,
+                qs_col=self.var_legacy_qs_col.get().strip() or "VP",
+            )
+            # 1) File output location
+            self.log(f"[OK] Wrote {wrote}")
+
+            # 2) Preview results
+            try:
+                head_txt = df.head(10).to_string(index=False)
+                self.log("Preview (first 10 rows):\n" + head_txt)
+            except Exception:
+                pass
+
+            # 3) Plot actual vs linearized with ideal region highlighted
+            try:
+                tol = float(self.var_lin_tol.get() or 0.01)
+                fig = make_actual_vs_linearized_plot(df, x_col="qp", y_col="deltpVent", rel_tol=tol)
+                png_path = outdir / "dpvent_vs_qp.png"
+                fig.savefig(png_path, dpi=150)
+                self._show_plot(fig, title="ΔpVent vs qp")
+                self.log(f"[OK] Plot saved: {png_path}")
+            except Exception as e:
+                self.log(f"[WARN] plot: {e}")
+        except Exception as e:
+            self.log(f"[ERROR] legacy process: {e}\n{traceback.format_exc()}")
+
+    def _show_plot(self, fig, title: str = "Plot"):
+        """Display a Matplotlib Figure inside the GUI.
+
+        If a Notebook exists (``self.nb`` or ``self.notebook``), the figure is
+        embedded as a new tab. Otherwise a non-blocking window is opened.
+        """
+
+        parent_nb = getattr(self, "nb", None) or getattr(self, "notebook", None)
+        if parent_nb is not None:
+            tab = ttk.Frame(parent_nb)
+            canvas = FigureCanvasTkAgg(fig, master=tab)
+            canvas.draw()
+            widget = canvas.get_tk_widget()
+            widget.pack(fill="both", expand=True)
+            parent_nb.add(tab, text=title)
+            parent_nb.select(tab)
+            return
+
+        top = tk.Toplevel(self)
+        top.title(title)
+        canvas = FigureCanvasTkAgg(fig, master=top)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def _do_fit(self):
         try:

@@ -247,6 +247,114 @@ def translate_piccolo(csv_or_df: Union[Path, pd.DataFrame], alpha: float, beta: 
     return out_path
 
 
+def process_legacy_parsed_csv(
+    csv_or_df: Union[Path, pd.DataFrame],
+    geom: Geometry,
+    sampling_hz: float | None,
+    out_path: Path,
+    qs_col: str = "VP",
+) -> Tuple[Path, pd.DataFrame]:
+    """Map qs→qp→ΔpVent for a parsed legacy CSV or DataFrame.
+
+    Parameters
+    ----------
+    csv_or_df:
+        Input CSV path or DataFrame containing a ``qs`` column (default ``VP``).
+    geom:
+        Geometry describing the venturi.
+    sampling_hz:
+        Optional sampling rate for time column generation.
+    out_path:
+        Destination path for the generated CSV.
+    qs_col:
+        Column name holding qs values.
+
+    Returns
+    -------
+    Tuple[Path, DataFrame]
+        Path to written CSV and the resulting DataFrame.
+    """
+
+    df = _df_from(csv_or_df)
+    qs = pd.to_numeric(df[qs_col], errors="coerce").to_numpy(float)
+    r = r_ratio(geom)
+    beta = beta_from_geometry(geom)
+    qp = map_qs_to_qt(qs, r=r, rho_t_over_rho_s=1.0)
+    dpv = venturi_dp_from_qt(qp, beta=beta)
+
+    out = df.copy()
+    out["qp"] = qp
+    out["deltpVent"] = dpv
+    if sampling_hz and sampling_hz > 0:
+        n = len(out)
+        out["Sample"] = np.arange(n)
+        out["Time_s"] = out["Sample"] / float(sampling_hz)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(out_path, index=False)
+    return out_path, out
+
+
+def make_actual_vs_linearized_plot(
+    df: pd.DataFrame,
+    x_col: str = "qp",
+    y_col: str = "deltpVent",
+    rel_tol: float = 0.01,
+):
+    """Return a Matplotlib Figure for actual vs linearized Δp with ideal region.
+
+    The linear model is a least-squares fit ``y ≈ m x + b`` on the full dataset.
+    The "ideal" region is where ``|y - (m x + b)| / max(|y|, 1e-12) ≤ rel_tol``.
+    """
+
+    import numpy as np  # local import to avoid heavy dependency at module load
+    from matplotlib.figure import Figure
+
+    x = np.asarray(df[x_col].to_numpy(float))
+    y = np.asarray(df[y_col].to_numpy(float))
+    if x.size == 0:
+        raise ValueError("No rows to plot")
+
+    # Fit linear model and compute ideal region mask
+    m, b = np.polyfit(x, y, 1)
+    y_lin = m * x + b
+    denom = np.maximum(np.abs(y), 1e-12)
+    rel_err = np.abs(y - y_lin) / denom
+    ideal_mask = rel_err <= rel_tol
+
+    # Build figure
+    fig = Figure(figsize=(6.0, 4.0), tight_layout=True)
+    ax = fig.add_subplot(111)
+    ax.scatter(x, y, s=14, label="actual")
+    ax.plot(x, y_lin, linewidth=1.5, label=f"linearized (m={m:.3g}, b={b:.3g})")
+
+    if ideal_mask.any():
+        idx = np.arange(x.size)
+        runs: list[tuple[int, int]] = []
+        in_run = False
+        start = 0
+        for i, ok in enumerate(ideal_mask):
+            if ok and not in_run:
+                in_run = True
+                start = i
+            elif not ok and in_run:
+                runs.append((start, i - 1))
+                in_run = False
+        if in_run:
+            runs.append((start, x.size - 1))
+        for j, (i0, i1) in enumerate(runs):
+            xl = float(min(x[i0], x[i1]))
+            xr = float(max(x[i0], x[i1]))
+            ax.axvspan(xl, xr, alpha=0.15, label="ideal region" if j == 0 else None)
+
+    ax.set_xlabel(x_col)
+    ax.set_ylabel(y_col)
+    ax.set_title("ΔpVent vs qp — actual vs linearized")
+    ax.grid(True, which="both", linewidth=0.6, alpha=0.35)
+    ax.legend(frameon=False)
+    return fig
+
+
 def legacy_results_from_csv(csv_or_df: Union[Path, pd.DataFrame], cfg: ResultsConfig, out_path: Path) -> dict:
     """Compute legacy-style summary fields and persist them to CSV.
 
