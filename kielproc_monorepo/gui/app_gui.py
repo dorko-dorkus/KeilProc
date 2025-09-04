@@ -15,6 +15,14 @@ import math
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import pandas as pd
+from ui_polish import (
+    apply_style,
+    make_statusbar,
+    set_grid_weights,
+    tooltip,
+    vcmd_float,
+    labeled_row,
+)
 
 # Ensure repo root is importable when running as "python gui/app_gui.py"
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,13 +90,17 @@ class ScrollableFrame(ttk.Frame):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Kiel/Piccolo Processor — Integrated GUI")
-        self.geometry("980x720")
-        style = ttk.Style(self)
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
+        self.title("KeilProc – Analysis")
+        apply_style(self, font_scale=1.10)
+        self.minsize(980, 720)
+
+        # bottom status bar (use self.log_status("...") anywhere)
+        self.status, self.log_status = make_statusbar(self)
+
+        # sane root grid weights if you ever grid() top-level containers
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
         self._build()
 
     def _build(self):
@@ -98,6 +110,7 @@ class App(tk.Tk):
         self.tab_phys = ScrollableFrame(self.nb)
         self.nb.add(self.tab_phys, text="Physics / Translation")
         self._build_phys(self.tab_phys.inner)
+        set_grid_weights(self.tab_phys.inner, rows=50, cols=4)
 
         self.tab_setpoints = ScrollableFrame(self.nb)
         self.nb.add(self.tab_setpoints, text="Setpoints")
@@ -106,10 +119,12 @@ class App(tk.Tk):
         self.tab_results = ScrollableFrame(self.nb)
         self.nb.add(self.tab_results, text="Results")
         self._build_results(self.tab_results.inner)
+        set_grid_weights(self.tab_results.inner, rows=30, cols=4)
 
         self.tab_integrate = ScrollableFrame(self.nb)
         self.nb.add(self.tab_integrate, text="8-Port Integration")
         self._build_integrate(self.tab_integrate.inner)
+        set_grid_weights(self.tab_integrate.inner, rows=30, cols=4)
 
     def _build_phys(self, frm):
         pad = {"padx": 6, "pady": 4}
@@ -254,10 +269,26 @@ class App(tk.Tk):
         ttk.Label(frm, text="Legacy CSV").grid(row=row, column=0, sticky="e", **pad)
         ttk.Entry(frm, textvariable=self.var_tr_csv, width=56).grid(row=row, column=1, **pad)
         ttk.Button(frm, text="Browse", command=lambda: self._pick(self.var_tr_csv, [("CSV","*.csv")])).grid(row=row, column=2, **pad); row+=1
-        ttk.Label(frm, text="alpha").grid(row=row, column=0, sticky="e", **pad)
-        ttk.Entry(frm, textvariable=self.var_alpha, width=10).grid(row=row, column=1, sticky="w", **pad)
-        ttk.Label(frm, text="beta").grid(row=row, column=2, sticky="e", **pad)
-        ttk.Entry(frm, textvariable=self.var_beta, width=10).grid(row=row, column=3, sticky="w", **pad); row+=1
+        vcmd = vcmd_float(self)
+        self.ent_alpha = ttk.Entry(
+            frm,
+            textvariable=self.var_alpha,
+            width=10,
+            validate="key",
+            validatecommand=vcmd,
+        )
+        row = labeled_row(frm, "alpha", self.ent_alpha, row)
+        tooltip(self.ent_alpha, "translation scale α")
+
+        self.ent_beta = ttk.Entry(
+            frm,
+            textvariable=self.var_beta,
+            width=10,
+            validate="key",
+            validatecommand=vcmd,
+        )
+        row = labeled_row(frm, "beta", self.ent_beta, row)
+        tooltip(self.ent_beta, "translation offset β")
         ttk.Button(frm, text="Apply translation → CSV", command=self._do_translate).grid(row=row, column=1, sticky="w", **pad); row+=1
 
         # Legacy results
@@ -417,11 +448,26 @@ class App(tk.Tk):
 
         # Static & baro reconciliation
         self.var_baro = tk.StringVar()  # empty means "use CSV absolute or CSV baro"
-        ttk.Label(frm, text="Baro [Pa] (only if Static_gauge)").grid(row=row, column=0, sticky="e", **pad)
-        ttk.Entry(frm, textvariable=self.var_baro, width=12).grid(row=row, column=1, sticky="w", **pad)
-        ttk.Label(frm, text="Replicate strategy").grid(row=row, column=2, sticky="e", **pad)
+        self.ent_baro = ttk.Entry(
+            frm,
+            textvariable=self.var_baro,
+            width=12,
+            validate="key",
+            validatecommand=vcmd_float(self),
+        )
+        row = labeled_row(frm, "Baro [Pa] (only if Static_gauge)", self.ent_baro, row)
+        tooltip(self.ent_baro, "override barometric pressure")
+
         self.var_rep = tk.StringVar(value="mean")
-        ttk.Combobox(frm, textvariable=self.var_rep, values=["mean","last"], width=10, state="readonly").grid(row=row, column=3, sticky="w", **pad); row += 1
+        rep_cb = ttk.Combobox(
+            frm,
+            textvariable=self.var_rep,
+            values=["mean", "last"],
+            width=10,
+            state="readonly",
+        )
+        row = labeled_row(frm, "Replicate strategy", rep_cb, row)
+        tooltip(rep_cb, "aggregation for repeated samples")
 
         # Weights
         self.var_weights_path = tk.StringVar()
