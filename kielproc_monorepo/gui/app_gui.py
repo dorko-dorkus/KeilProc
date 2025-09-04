@@ -15,6 +15,11 @@ import math
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import pandas as pd
+# Ensure repo root is importable when running as "python gui/app_gui.py"
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from ui_polish import (
     apply_style,
     make_statusbar,
@@ -23,11 +28,6 @@ from ui_polish import (
     vcmd_float,
     labeled_row,
 )
-
-# Ensure repo root is importable when running as "python gui/app_gui.py"
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 # Adapter functions into the kielproc backend
 from kielproc_gui_adapter import (
@@ -1131,5 +1131,27 @@ class App(tk.Tk):
         except Exception as e:
             self.log(f"[ERROR] polar: {e}\n{traceback.format_exc()}")
 
+def main() -> None:
+    """Launch the Tkinter application.
+
+    If no display is available (e.g. running in a headless environment), the
+    GUI cannot start. Catch the resulting ``tk.TclError`` and print a helpful
+    message instead of crashing with a traceback.
+    """
+
+    try:
+        App().mainloop()
+    except tk.TclError as exc:  # pragma: no cover - depends on environment
+        if "no display name" in str(exc) or "display" in str(exc).lower():
+            print(
+                "Cannot start GUI – no display available."
+                " Set the DISPLAY environment variable or run on a system with"
+                " a graphical interface.",
+                file=sys.stderr,
+            )
+        else:  # re-raise unexpected TclError
+            raise
+
+
 if __name__ == "__main__":
-    App().mainloop()
+    main()
