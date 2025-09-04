@@ -931,7 +931,8 @@ class App(tk.Tk):
             geom = self._get_geometry()
             outdir = Path(self.var_outdir.get()); outdir.mkdir(parents=True, exist_ok=True)
             out = outdir / "legacy_qs_qp_dpvent.csv"
-            fs = float(self.var_fs.get()) if self.var_fs.get().strip() else None
+            fs_val = self.var_fs.get()
+            fs = float(fs_val) if fs_val > 0 else None
             wrote, df = process_legacy_parsed_csv(
                 Path(self.var_legacy_csv.get()),
                 geom,
