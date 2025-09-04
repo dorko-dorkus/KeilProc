@@ -40,6 +40,21 @@ def set_grid_weights(widget: tk.Widget, rows: int, cols: int) -> None:
         widget.columnconfigure(c, weight=1)
 
 
+def bind_mousewheel(widget: tk.Widget) -> None:
+    """Enable basic mouse wheel scrolling on *widget* across platforms."""
+
+    def _on_mousewheel(event):
+        delta = event.delta
+        if delta == 0 and event.num in (4, 5):
+            delta = 120 if event.num == 4 else -120
+        widget.yview_scroll(int(-delta / 120), "units")
+
+    widget.bind("<Enter>", lambda _: widget.focus_set())
+    widget.bind("<MouseWheel>", _on_mousewheel)
+    widget.bind("<Button-4>", _on_mousewheel)
+    widget.bind("<Button-5>", _on_mousewheel)
+
+
 def tooltip(widget: tk.Widget, text: str) -> None:
     """Attach a very small tooltip to *widget*."""
     tip = {"window": None}

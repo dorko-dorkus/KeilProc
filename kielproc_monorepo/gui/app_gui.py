@@ -24,6 +24,7 @@ from ui_polish import (
     apply_style,
     make_statusbar,
     set_grid_weights,
+    bind_mousewheel,
     tooltip,
     vcmd_float,
     labeled_row,
@@ -76,16 +77,7 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.bind(
             "<Configure>", lambda e: self.canvas.itemconfig(self._win, width=e.width)
         )
-
-        def _on_mousewheel(event):
-            delta = event.delta
-            if delta == 0 and event.num in (4, 5):
-                delta = 120 if event.num == 4 else -120
-            self.canvas.yview_scroll(int(-delta / 120), "units")
-
-        self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        self.canvas.bind_all("<Button-4>", _on_mousewheel)
-        self.canvas.bind_all("<Button-5>", _on_mousewheel)
+        bind_mousewheel(self.canvas)
 
 class App(tk.Tk):
     def __init__(self):
