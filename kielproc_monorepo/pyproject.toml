@@ -15,6 +15,7 @@ dependencies = [
     "matplotlib>=3.8",
     "openpyxl>=3.1",
     "tk>=0.1",
+    "keilproc-oneclick>=0.1.0",
 ]
 
 [project.scripts]
