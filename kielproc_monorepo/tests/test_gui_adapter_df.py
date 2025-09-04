@@ -5,6 +5,7 @@ from kielproc_gui_adapter import (
     map_from_tot_and_static,
     translate_piccolo,
     legacy_results_from_csv,
+    compute_setpoints,
 )
 from kielproc.legacy_results import ResultsConfig
 
@@ -40,3 +41,17 @@ def test_legacy_results_from_dataframe(tmp_path: Path):
     out = tmp_path / "results.csv"
     res = legacy_results_from_csv(df, cfg, out)
     assert out.exists() and res["n_samples"] == 2
+
+
+def test_compute_setpoints_from_dataframe(tmp_path: Path):
+    df = pd.DataFrame({
+        "i/p": [0, 25, 50, 75, 100],
+        "820": [4, 8, 12, 16, 20],
+    })
+    json_path = tmp_path / "sp.json"
+    csv_path = tmp_path / "sp.csv"
+    res = compute_setpoints(df, "i/p", "820", out_json=json_path, out_csv=csv_path)
+    assert json_path.exists() and csv_path.exists()
+    assert res["optimal_span"]["span"]["mA_low"] == 4.0
+    mapping = pd.read_csv(csv_path)
+    assert set(mapping.columns) == {"pct", "x", "mA"}
