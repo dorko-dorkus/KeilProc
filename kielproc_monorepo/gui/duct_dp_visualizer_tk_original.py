@@ -15,6 +15,13 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
+# Ensure repo root is importable when running as "python gui/duct_dp_visualizer_tk_original.py"
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from ui_polish import bind_mousewheel
+
 # Try to import the analysis functions from your existing module
 Analyzer = None
 _module_err = None
@@ -50,16 +57,7 @@ class ScrollableFrame(ttk.Frame):
         self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfig(self._win, width=e.width))
-
-        def _on_mousewheel(event):
-            delta = event.delta
-            if delta == 0 and event.num in (4, 5):
-                delta = 120 if event.num == 4 else -120
-            self.canvas.yview_scroll(int(-delta / 120), "units")
-
-        self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        self.canvas.bind_all("<Button-4>", _on_mousewheel)
-        self.canvas.bind_all("<Button-5>", _on_mousewheel)
+        bind_mousewheel(self.canvas)
 
 
 class App(tk.Tk):
