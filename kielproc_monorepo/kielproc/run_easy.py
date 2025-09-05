@@ -12,7 +12,7 @@ exercised in isolation.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import json
 import time
 
@@ -48,7 +48,7 @@ class Orchestrator:
 
     def __init__(self, run: RunInputs):
         self.run = run
-        self.artifacts: Dict[str, Path] = {}
+        self.artifacts: List[Path] = []
         self.summary: Dict = {"warnings": [], "errors": []}
 
     # --- helpers -----------------------------------------------------
@@ -94,9 +94,9 @@ class Orchestrator:
                 parse_legacy_workbook(src, out_dir=ports_dir, return_mode="files")
             # record artifacts: csvs and summary jsons
             for p in ports_dir.glob("*.csv"):
-                self.artifacts[p.name] = p
+                self.artifacts.append(p)
             for j in ports_dir.glob("*__parse_summary.json"):
-                self.artifacts[j.name] = j
+                self.artifacts.append(j)
         except Exception as e:
             self.summary["errors"].append(f"parse: {e}")
             raise
@@ -151,10 +151,10 @@ class Orchestrator:
         ref_json = outdir / "reference_block.json"
         ref_json.write_text(json.dumps(ref_block, indent=2))
 
-        self.artifacts["per_port.csv"] = per_csv
-        self.artifacts["duct_result.json"] = duct_json
-        self.artifacts["normalize_meta.json"] = norm_json
-        self.artifacts["reference_block.json"] = ref_json
+        self.artifacts.append(per_csv)
+        self.artifacts.append(duct_json)
+        self.artifacts.append(norm_json)
+        self.artifacts.append(ref_json)
 
         self._pairs = res.get("pairs", [])
 
@@ -188,13 +188,13 @@ class Orchestrator:
                 try:
                     process_legacy_parsed_csv(csv, geom, None, out_path)
                     self._mapped_csvs.append(out_path)
-                    self.artifacts[out_path.name] = out_path
+                    self.artifacts.append(out_path)
                 except Exception as e:
                     self.summary["warnings"].append(f"map {csv.name}: {e}")
 
         try:
             png = render_velocity_heatmap(mapped_dir, pairs, self.run.baro_override_Pa)
-            self.artifacts[png.name] = png
+            self.artifacts.append(png)
         except Exception as e:
             self.summary["warnings"].append(f"heatmap: {e}")
 
@@ -225,7 +225,7 @@ class Orchestrator:
                 v = res.get(k)
                 if v:
                     p = Path(v)
-                    self.artifacts[p.name] = p
+                    self.artifacts.append(p)
             if res.get("blocks_info"):
                 b0 = res["blocks_info"][0]
                 self._alpha_beta = {"alpha": b0.get("alpha"), "beta": b0.get("beta")}
@@ -252,7 +252,7 @@ class Orchestrator:
         out_path = outdir / f"{Path(src_csv).stem}_translated.csv"
         try:
             translate_piccolo(src_csv, alpha, beta, "Piccolo", "Piccolo_translated", out_path)
-            self.artifacts[out_path.name] = out_path
+            self.artifacts.append(out_path)
             self._translated_csv = out_path
         except Exception as e:
             self.summary["warnings"].append(f"translate: {e}")
@@ -284,10 +284,10 @@ class Orchestrator:
         csv_out = outdir / "legacy_results.csv"
         try:
             res = legacy_results_from_csv(csv, cfg, csv_out)
-            self.artifacts["legacy_results.csv"] = csv_out
+            self.artifacts.append(csv_out)
             json_out = outdir / "legacy_results.json"
             json_out.write_text(json.dumps(res, indent=2))
-            self.artifacts["legacy_results.json"] = json_out
+            self.artifacts.append(json_out)
         except Exception as e:
             self.summary["warnings"].append(f"report: {e}")
 
@@ -299,7 +299,8 @@ class Orchestrator:
         out = Path(f"RUN_{stamp}")
         dirs = self._mkdirs(out)
         # persist run context for audit
-        (out / "run_context.json").write_text(
+        context_path = out / "run_context.json"
+        context_path.write_text(
             json.dumps(
                 {
                     "site": self.run.site.name,
@@ -310,12 +311,37 @@ class Orchestrator:
                 indent=2,
             )
         )
+        self.artifacts.append(context_path)
+
         self.parse(dirs["ports"])
         self.integrate(out)
         self.map(out)
         self.fit(out)
         self.translate(out)
         self.report(out)
+
+        # build manifest of outputs
+        tables = [str(p) for p in self.artifacts if p.suffix in {".csv", ".json"}]
+        plots = [str(p) for p in self.artifacts if p.suffix in {".png", ".pdf", ".svg"}]
+        key_vals: Dict[str, float] = {}
+        ref = next((p for p in self.artifacts if p.name == "reference_block.json"), None)
+        if ref and ref.exists():
+            try:
+                ref_data = json.loads(ref.read_text())
+                for k in ("q_s_pa", "q_t_pa", "delta_p_vent_est_pa"):
+                    v = ref_data.get(k)
+                    if v is not None:
+                        key_vals[k] = v
+            except Exception:
+                pass
+        if getattr(self, "_alpha_beta", None):
+            key_vals.update({k: v for k, v in self._alpha_beta.items() if v is not None})
+
+        manifest = {"tables": tables, "plots": plots, "key_values": key_vals}
+        manifest_path = out / "summary.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2))
+        self.artifacts.append(manifest_path)
+
         return out
 
 
