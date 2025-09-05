@@ -176,8 +176,16 @@ class Orchestrator:
         mapped_dir.mkdir(parents=True, exist_ok=True)
 
         geom_dict = self.run.site.geometry or {}
+        # Filter out any unexpected geometry fields so presets with extra
+        # keys (e.g. ``duct_diameter_m``) don't cause ``Geometry``
+        # initialization to fail.
+        from dataclasses import fields as dataclass_fields
+
+        valid_keys = {f.name for f in dataclass_fields(Geometry)}
+        filtered = {k: v for k, v in geom_dict.items() if k in valid_keys}
+
         try:
-            geom = Geometry(**geom_dict)
+            geom = Geometry(**filtered)
         except Exception:
             geom = None
 

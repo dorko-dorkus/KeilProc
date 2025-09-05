@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pandas as pd
+
 from kielproc.run_easy import Orchestrator, RunInputs, SitePreset
 
 
@@ -54,3 +56,29 @@ def test_run_all_uses_output_base(tmp_path, monkeypatch):
     out = orch.run_all()
     assert out.is_dir()
     assert out.parent == tmp_path
+
+
+def test_map_ignores_unknown_geometry_keys(tmp_path):
+    geom = {
+        "duct_height_m": 1.0,
+        "duct_width_m": 1.0,
+        "throat_diameter_m": 0.1,
+        # Extra field not recognized by Geometry dataclass
+        "duct_diameter_m": 2.5,
+    }
+    preset = SitePreset(name="T", geometry=geom, instruments={}, defaults={})
+    run = RunInputs(src=tmp_path / "dummy.xlsx", site=preset)
+    orch = Orchestrator(run)
+
+    base_dir = tmp_path / "run"
+    ports_dir = base_dir / "ports_csv"
+    ports_dir.mkdir(parents=True)
+
+    df = pd.DataFrame({"VP": [1.0, 2.0]})
+    csv = ports_dir / "p1.csv"
+    df.to_csv(csv, index=False)
+
+    orch.map(base_dir)
+
+    mapped_csv = base_dir / "_mapped" / "p1_mapped.csv"
+    assert mapped_csv.exists(), "Expected mapped CSV despite extra geometry keys"
