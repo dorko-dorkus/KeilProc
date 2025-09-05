@@ -10,7 +10,7 @@ def test_cli_one_click(monkeypatch, tmp_path, capsys):
     def fake_run(src, site, baro_override_Pa=None, run_stamp=None, *, output_base=None):
         assert src == Path(tmp_path / "book.xlsx")
         assert output_base is None
-        return out_dir
+        return out_dir, {"warnings": ["w"], "errors": []}, [str(out_dir / "a.csv")]
 
     monkeypatch.setattr(cli, "run_easy_legacy", fake_run)
     args = ["one-click", str(tmp_path / "book.xlsx"), "--site", "DefaultSite"]
@@ -19,3 +19,5 @@ def test_cli_one_click(monkeypatch, tmp_path, capsys):
     data = json.loads(captured)
     assert data["ok"] is True
     assert data["out_dir"] == str(out_dir)
+    assert data["summary"]["warnings"] == ["w"]
+    assert data["artifacts"] == [str(out_dir / "a.csv")]

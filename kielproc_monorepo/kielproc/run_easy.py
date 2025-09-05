@@ -416,8 +416,25 @@ def run_easy_legacy(
     *,
     output_base: Optional[Path] = None,
     progress_cb: Optional[Callable[[str], None]] = None,
-) -> Path:
-    """Run the full pipeline for a legacy workbook using ``SitePreset`` defaults."""
+) -> tuple[Path, Dict, List[str]]:
+    """Run the full pipeline for a legacy workbook using ``SitePreset`` defaults.
 
-    run = RunInputs(src=src, site=site, baro_override_Pa=baro_override_Pa, run_stamp=run_stamp, output_base=output_base)
-    return Orchestrator(run, progress_cb=progress_cb).run_all()
+    Returns
+    -------
+    tuple
+        ``(run_dir, summary, artifacts)`` where ``run_dir`` is the output
+        directory path, ``summary`` contains warning/error details, and
+        ``artifacts`` is a list of generated tables/plots.
+    """
+
+    run = RunInputs(
+        src=src,
+        site=site,
+        baro_override_Pa=baro_override_Pa,
+        run_stamp=run_stamp,
+        output_base=output_base,
+    )
+    orch = Orchestrator(run, progress_cb=progress_cb)
+    out = orch.run_all()
+    # return triple so app GUI can display warnings/plots/tables
+    return out, orch.summary, [str(p) for p in orch.artifacts]

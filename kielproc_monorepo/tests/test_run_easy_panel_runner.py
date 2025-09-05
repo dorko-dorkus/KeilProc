@@ -12,7 +12,7 @@ def test_runner_respects_output_base(tmp_path, monkeypatch):
         calls["output_base"] = output_base
         if progress_cb:
             progress_cb("step")
-        return Path("RUN_fake")
+        return Path("RUN_fake"), {"warnings": [], "errors": []}, [Path("tab.csv")]
 
     monkeypatch.setattr(rep, "run_easy_legacy", fake_run_easy_legacy)
 

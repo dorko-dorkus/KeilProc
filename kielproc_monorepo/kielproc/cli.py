@@ -109,8 +109,23 @@ def main(argv=None):
     ap = build_parser()
     a = ap.parse_args(argv)
     if a.cmd == "one-click":
-        out = run_easy_legacy(Path(a.src), PRESETS[a.site], baro_override_Pa=a.baro, run_stamp=a.stamp, output_base=a.out)
-        print(json.dumps({"ok": True, "out_dir": str(out)}))
+        out, summary, artifacts = run_easy_legacy(
+            Path(a.src),
+            PRESETS[a.site],
+            baro_override_Pa=a.baro,
+            run_stamp=a.stamp,
+            output_base=a.out,
+        )
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "out_dir": str(out),
+                    "summary": summary,
+                    "artifacts": artifacts,
+                }
+            )
+        )
     elif a.cmd == "results":
         cfg_dict = {}
         if a.config:
