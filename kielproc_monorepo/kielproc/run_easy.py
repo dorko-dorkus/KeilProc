@@ -186,9 +186,10 @@ class Orchestrator:
     def map(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Build velocity maps from integrated data."""
         from kielproc_gui_adapter import process_legacy_parsed_csv
+        from kielproc.physics import map_qs_to_qt
         from kielproc.visuals import render_velocity_heatmap
         from .aggregate import _port_id_from_stem
-        from .geometry import Geometry
+        from .geometry import Geometry, r_ratio
 
         ports_dir = base_dir / "ports_csv"
         mapped_dir = base_dir / "_mapped"
@@ -219,11 +220,29 @@ class Orchestrator:
             if geom is not None:
                 out_path = mapped_dir / f"{csv.stem}_mapped.csv"
                 try:
-                    process_legacy_parsed_csv(csv, geom, None, out_path)
+                    # Full mapping (qp + deltpVent) if Geometry has a throat
+                    process_legacy_parsed_csv(csv, geom, None, out_path)  # qs_col defaults to "VP"
                     self._mapped_csvs.append(out_path)
                     self.artifacts.append(out_path)
                 except Exception as e:
-                    self.summary["warnings"].append(f"map {csv.name}: {e}")
+                    # Graceful fallback: produce qp only (no venturi Δp) if beta cannot be derived
+                    try:
+                        import pandas as pd
+                        df = pd.read_csv(csv)
+                        if "VP" not in df.columns:
+                            raise RuntimeError("no VP column after normalization")
+                        qs = pd.to_numeric(df["VP"], errors="coerce").to_numpy(float)
+                        qp = map_qs_to_qt(qs, r=r_ratio(geom), rho_t_over_rho_s=1.0)
+                        out = df.copy()
+                        out["qp"] = qp
+                        out.to_csv(out_path, index=False)
+                        self._mapped_csvs.append(out_path)
+                        self.artifacts.append(out_path)
+                        self.summary["warnings"].append(
+                            f"map {csv.name}: throat missing; wrote qp only (no deltpVent)."
+                        )
+                    except Exception:
+                        self.summary["warnings"].append(f"map {csv.name}: {e}")
 
         try:
             png = render_velocity_heatmap(mapped_dir, pairs, self.run.baro_override_Pa)
