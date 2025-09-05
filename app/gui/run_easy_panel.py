@@ -1,32 +1,27 @@
 from __future__ import annotations
 from pathlib import Path
-from dataclasses import dataclass
+import json
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal, QUrl
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QFileDialog, QComboBox, QDoubleSpinBox, QTextEdit
+    QFileDialog, QComboBox, QDoubleSpinBox, QTextBrowser
 )
 
 # One‑click pipeline
-from keilproc_oneclick.orchestrator import run_easy_legacy
-from keilproc_oneclick import presets as kp_presets
+from kielproc.run_easy import run_easy_legacy, SitePreset
+from kielproc.cli import PRESETS as kp_presets
 
 
 def _available_presets():
-    # Discover simple, attribute‑style presets from keilproc_oneclick.presets
-    out = {}
-    for name in dir(kp_presets):
-        if name.startswith("_"):
-            continue
-        obj = getattr(kp_presets, name)
-        # very light type check
-        if getattr(obj, "name", None) and getattr(obj, "geometry", None):
-            out[obj.name] = obj
-    if not out:
-        # Always provide at least DefaultSite
-        out = {kp_presets.DefaultSite.name: kp_presets.DefaultSite}
-    return out
+    presets = dict(kp_presets)
+    if not presets:
+        presets = {
+            "DefaultSite": SitePreset(
+                name="DefaultSite", geometry={}, instruments={}, defaults={}
+            )
+        }
+    return presets
 
 
 class _Runner(QObject):
@@ -45,8 +40,13 @@ class _Runner(QObject):
     def run(self):
         self.started.emit()
         try:
-            self.progress.emit("Preflight…")
-            out = run_easy_legacy(self.src, self.preset, self.baro, self.stamp)
+            out = run_easy_legacy(
+                self.src,
+                self.preset,
+                self.baro,
+                self.stamp,
+                progress_cb=self.progress.emit,
+            )
             self.finished.emit(str(out))
         except Exception as e:
             self.failed.emit(str(e))
@@ -106,8 +106,9 @@ class RunEasyPanel(QWidget):
         v.addLayout(row4)
 
         # Log
-        self.log = QTextEdit()
+        self.log = QTextBrowser()
         self.log.setReadOnly(True)
+        self.log.setOpenExternalLinks(True)
         self.log.setPlaceholderText("Status and summary will appear here…")
         v.addWidget(self.log, 1)
 
@@ -151,4 +152,18 @@ class RunEasyPanel(QWidget):
         self.log.append(f"❌ Failed: {msg}")
 
     def _on_finished(self, out_dir: str):
-        self.log.append(f"✅ Done. Output: {out_dir}")
+        self.log.append("✅ Done.")
+        url = QUrl.fromLocalFile(out_dir)
+        self.log.append(f'<a href="{url.toString()}">Open results directory</a>')
+        manifest = Path(out_dir) / "summary.json"
+        try:
+            data = json.loads(manifest.read_text())
+            tables = data.get("tables", [])
+            plots = data.get("plots", [])
+            self.log.append(f"Tables: {len(tables)}, Plots: {len(plots)}")
+            kv = data.get("key_values", {})
+            if kv:
+                kv_text = ", ".join(f"{k}={v}" for k, v in kv.items())
+                self.log.append(kv_text)
+        except Exception:
+            self.log.append("Summary unavailable.")
