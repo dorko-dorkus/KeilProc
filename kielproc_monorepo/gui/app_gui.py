@@ -58,6 +58,9 @@ from kielproc.geometry import (
 )
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
+# One-click run tab
+from .run_easy_tab import insert_run_easy_tab
+
 
 def _float_or_zero(value: str, default: float = 0.0) -> float:
     """Convert *value* to float, returning *default* when empty.
@@ -128,6 +131,9 @@ class App(tk.Tk):
     def _build(self):
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True)
+
+        # Insert Run Easy one-click tab first
+        self.tab_run_easy = insert_run_easy_tab(self.nb)
 
         self.tab_phys = ScrollableFrame(self.nb)
         self.nb.add(self.tab_phys, text="Physics / Translation")
