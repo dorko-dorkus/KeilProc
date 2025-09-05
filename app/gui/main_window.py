@@ -1,36 +1,46 @@
-import tkinter as tk
-from tkinter import ttk
+"""Compatibility launcher that delegates to the canonical app.
+This keeps old entry points working but avoids two competing windows.
+"""
+from __future__ import annotations
 
-class MainWindow(tk.Tk):
-    def __init__(self, parent=None):  # parent kept for API compatibility
-        super().__init__()
-        self.setupUi()
+try:
+    from kielproc_monorepo.gui.app_gui import App as _App, main as _main  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - fallback for minimal environments
+    _App = None  # type: ignore
+    _main = None  # type: ignore
 
-    def setupUi(self):
-        self.tabs = ttk.Notebook(self)
-        self.tabs.pack(expand=1, fill="both")
+if _App is None:  # pragma: no cover - simplified fallback for tests/minimal Tk
+    import tkinter as tk
+    from tkinter import ttk
 
-        # existing tabs assembled elsewhere…
-        # Always prepend the Run Easy panel so operators see it first
-        self._insert_run_easy()
+    class _App(tk.Tk):  # type: ignore[misc]
+        def __init__(self, parent=None):
+            super().__init__()
+            self.tabs = ttk.Notebook(self)
+            self.tabs.pack(expand=1, fill="both")
+            self._insert_run_easy()
 
-    def _insert_run_easy(self) -> None:
-        """Insert the Run Easy panel as the first tab.
+        def _insert_run_easy(self) -> None:
+            try:
+                from .run_easy_panel import RunEasyPanel
 
-        Any import or wiring issues are treated as non-fatal; the GUI should
-        continue to load even if the panel cannot be constructed (e.g. missing
-        optional dependencies). In such cases the error is surfaced to the
-        console for easier diagnosis.
-        """
+                run_easy = RunEasyPanel(self.tabs)
+                self.tabs.insert(0, run_easy, text="Run Easy")
+                self.tabs.select(run_easy)
+            except Exception as e:  # pragma: no cover - exercised via unit tests
+                import sys
 
-        try:  # pragma: no cover - exercised via unit tests
-            from .run_easy_panel import RunEasyPanel
+                print(f"[RunEasy] wiring failed: {e}", file=sys.stderr)
 
-            run_easy = RunEasyPanel(self.tabs)
-            self.tabs.insert(0, run_easy, text="Run Easy")
-            self.tabs.select(run_easy)
-        except Exception as e:  # pragma: no cover - exercised via unit tests
-            # Non-fatal: if wiring fails (e.g., different widget name), surface in console and continue
-            import sys
+    def _main() -> None:
+        win = _App()
+        win.mainloop()
 
-            print(f"[RunEasy] wiring failed: {e}", file=sys.stderr)
+
+class MainWindow(_App):  # type: ignore[misc]
+    """Backwards-compatible alias for the unified GUI window."""
+    pass
+
+
+if __name__ == "__main__":  # pragma: no cover
+    _main()

@@ -66,6 +66,13 @@ except Exception as _e:  # non-fatal
     print(f"[RunEasy] import failed: {_e}", file=sys.stderr)
     RunEasyPanel = None
 
+try:
+    # Optional tab: legacy XLSX→CSV parser as a Notebook panel
+    from app.gui.legacy_parser_panel import LegacyParserPanel  # noqa: E402
+except Exception as _e:  # non-fatal
+    print(f"[LegacyParser] import failed: {_e}", file=sys.stderr)
+    LegacyParserPanel = None
+
 def _float_or_zero(value: str, default: float = 0.0) -> float:
     """Convert *value* to float, returning *default* when empty.
 
@@ -140,6 +147,14 @@ class App(tk.Tk):
                 self.nb.select(run_easy)
             except Exception as _e:
                 print(f"[RunEasy] wiring failed: {_e}", file=sys.stderr)
+
+        # Append "Legacy Parser" tab if available
+        if "LegacyParserPanel" in globals() and LegacyParserPanel is not None:
+            try:
+                legacy_tab = LegacyParserPanel(self.nb)
+                self.nb.add(legacy_tab, text="Legacy Parser")
+            except Exception as _e:
+                print(f"[LegacyParser] wiring failed: {_e}", file=sys.stderr)
 
     def _build(self):
         self.nb = ttk.Notebook(self)
