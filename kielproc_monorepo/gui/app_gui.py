@@ -16,6 +16,14 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import pandas as pd
 
+# Ensure sibling modules like ``ui_polish`` are importable when running this
+# file directly.  When executed as a script, Python's module search path only
+# includes the ``gui`` directory, so we need to add the monorepo root in order
+# to resolve top-level modules that live alongside ``gui``.
+_MONOREPO = Path(__file__).resolve().parents[1]
+if str(_MONOREPO) not in sys.path:
+    sys.path.insert(0, str(_MONOREPO))
+
 from ui_polish import (
     apply_style,
     make_statusbar,
@@ -56,9 +64,9 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 # --- Make the sibling 'app' package importable when running this file directly
 #     (tests set pythonpath=.../kielproc_monorepo, so you don't see this there).
-_ROOT = Path(__file__).resolve().parents[2]  # repo root containing 'app' and 'kielproc'
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+_REPO_ROOT = _MONOREPO.parent  # repo root containing 'app' and 'kielproc'
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 try:
     # Optional tab: minimal operator UI
     from app.gui.run_easy_panel import RunEasyPanel  # noqa: E402
