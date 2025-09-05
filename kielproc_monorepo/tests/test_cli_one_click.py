@@ -7,8 +7,9 @@ from kielproc import cli
 def test_cli_one_click(monkeypatch, tmp_path, capsys):
     out_dir = tmp_path / "out"
 
-    def fake_run(src, site, baro_override_Pa=None, run_stamp=None):
+    def fake_run(src, site, baro_override_Pa=None, run_stamp=None, *, output_base=None):
         assert src == Path(tmp_path / "book.xlsx")
+        assert output_base is None
         return out_dir
 
     monkeypatch.setattr(cli, "run_easy_legacy", fake_run)
