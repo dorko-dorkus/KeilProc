@@ -32,6 +32,7 @@ def build_parser():
     oc.add_argument("--site", default="DefaultSite", choices=PRESETS.keys())
     oc.add_argument("--baro", type=float, default=None, help="Override barometric pressure in Pa")
     oc.add_argument("--stamp", type=str, default=None, help="Override run stamp YYYYMMDD_HHMM (NZT)")
+    oc.add_argument("--out", type=Path, default=None, help="Output base directory (RUN_* will be created here)")
 
     i0 = sub.add_parser("results", help="Compute legacy-style results from a logger CSV")
     i0.add_argument("--csv", required=True, help="Input logger CSV path")
@@ -108,7 +109,7 @@ def main(argv=None):
     ap = build_parser()
     a = ap.parse_args(argv)
     if a.cmd == "one-click":
-        out = run_easy_legacy(Path(a.src), PRESETS[a.site], baro_override_Pa=a.baro, run_stamp=a.stamp)
+        out = run_easy_legacy(Path(a.src), PRESETS[a.site], baro_override_Pa=a.baro, run_stamp=a.stamp, output_base=a.out)
         print(json.dumps({"ok": True, "out_dir": str(out)}))
     elif a.cmd == "results":
         cfg_dict = {}

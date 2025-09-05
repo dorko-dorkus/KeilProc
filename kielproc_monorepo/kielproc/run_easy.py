@@ -37,6 +37,7 @@ class RunInputs:
     site: SitePreset
     baro_override_Pa: Optional[float] = None
     run_stamp: Optional[str] = None  # YYYYMMDD_HHMM in NZT
+    output_base: Optional[Path] = None  # If set, RUN_* will be created here
 
 
 class OneClickError(Exception):
@@ -302,7 +303,8 @@ class Orchestrator:
         self._progress("Preflight…")
         self.preflight()
         stamp = self._stamp()
-        out = Path(f"RUN_{stamp}")
+        base = (self.run.output_base or Path.cwd())
+        out = base / f"RUN_{stamp}"
         dirs = self._mkdirs(out)
         # persist run context for audit
         context_path = out / "run_context.json"
@@ -365,9 +367,11 @@ def run_easy_legacy(
     site: SitePreset,
     baro_override_Pa: Optional[float] = None,
     run_stamp: Optional[str] = None,
+    *,
+    output_base: Optional[Path] = None,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> Path:
     """Run the full pipeline for a legacy workbook using ``SitePreset`` defaults."""
 
-    run = RunInputs(src=src, site=site, baro_override_Pa=baro_override_Pa, run_stamp=run_stamp)
+    run = RunInputs(src=src, site=site, baro_override_Pa=baro_override_Pa, run_stamp=run_stamp, output_base=output_base)
     return Orchestrator(run, progress_cb=progress_cb).run_all()
