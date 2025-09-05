@@ -2,6 +2,8 @@ from __future__ import annotations
 from pathlib import Path
 import json
 
+import os
+
 from PySide6.QtCore import QObject, QThread, Signal, QUrl
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -28,28 +30,62 @@ class _Runner(QObject):
     started = Signal()
     progress = Signal(str)
     failed = Signal(str)
-    finished = Signal(str)  # run directory path
+    finished = Signal(str, dict, list)  # run directory, summary, artifacts
 
-    def __init__(self, src: Path, preset, baro: float | None, stamp: str | None):
+    def __init__(
+        self,
+        src: Path,
+        preset,
+        baro: float | None,
+        stamp: str | None,
+        out_dir: Path | None,
+    ):
         super().__init__()
         self.src = src
         self.preset = preset
         self.baro = baro
         self.stamp = stamp
+        self.out_dir = out_dir
 
     def run(self):
         self.started.emit()
         try:
-            out = run_easy_legacy(
+            cwd = Path.cwd()
+            if self.out_dir:
+                self.out_dir.mkdir(parents=True, exist_ok=True)
+                os.chdir(self.out_dir)
+
+            res = run_easy_legacy(
                 self.src,
                 self.preset,
                 self.baro,
                 self.stamp,
                 progress_cb=self.progress.emit,
             )
-            self.finished.emit(str(out))
+
+            summary = {}
+            artifacts: list[str] = []
+            out = res
+            if isinstance(res, tuple):
+                out = res[0]
+                if len(res) > 1 and isinstance(res[1], dict):
+                    summary = res[1]
+                if len(res) > 2 and isinstance(res[2], list):
+                    artifacts = [str(p) for p in res[2]]
+            elif hasattr(res, "summary"):
+                summary = getattr(res, "summary", {})
+                artifacts = [str(p) for p in getattr(res, "artifacts", [])]
+                out = getattr(res, "run_dir", out)
+
+            out_path = Path(out)
+            if not out_path.is_absolute():
+                out_path = (self.out_dir or cwd) / out_path
+            self.finished.emit(str(out_path), summary, artifacts)
         except Exception as e:
             self.failed.emit(str(e))
+        finally:
+            if self.out_dir:
+                os.chdir(cwd)
 
 
 class RunEasyPanel(QWidget):
@@ -88,22 +124,41 @@ class RunEasyPanel(QWidget):
         row2.addWidget(btn_browse)
         v.addLayout(row2)
 
-        # Baro override
+        # Output directory
         row3 = QHBoxLayout()
-        row3.addWidget(QLabel("Baro override (Pa, optional):"))
+        row3.addWidget(QLabel("Output directory:"))
+        self.outdir = QLineEdit()
+        self.outdir.setPlaceholderText("/path/to/output")
+        btn_browse_out = QPushButton("Browse…")
+        btn_browse_out.clicked.connect(self._browse_outdir)
+        row3.addWidget(self.outdir, 1)
+        row3.addWidget(btn_browse_out)
+        v.addLayout(row3)
+
+        # Baro override
+        row4 = QHBoxLayout()
+        row4.addWidget(QLabel("Baro override (Pa, optional):"))
         self.baro = QDoubleSpinBox()
         self.baro.setRange(0.0, 300000.0)
         self.baro.setDecimals(1)
         self.baro.setValue(0.0)  # 0 => not set
-        row3.addWidget(self.baro)
-        v.addLayout(row3)
+        row4.addWidget(self.baro)
+        v.addLayout(row4)
+
+        # Run stamp
+        row5 = QHBoxLayout()
+        row5.addWidget(QLabel("Run stamp (optional):"))
+        self.stamp = QLineEdit()
+        self.stamp.setPlaceholderText("YYYYMMDD_HHMM")
+        row5.addWidget(self.stamp)
+        v.addLayout(row5)
 
         # Process button
-        row4 = QHBoxLayout()
+        row6 = QHBoxLayout()
         self.btn = QPushButton("Process")
         self.btn.clicked.connect(self._process)
-        row4.addWidget(self.btn)
-        v.addLayout(row4)
+        row6.addWidget(self.btn)
+        v.addLayout(row6)
 
         # Log
         self.log = QTextBrowser()
@@ -118,11 +173,18 @@ class RunEasyPanel(QWidget):
         if path:
             self.path.setText(path)
 
+    def _browse_outdir(self):
+        d = QFileDialog.getExistingDirectory(self, "Select output directory", "")
+        if d:
+            self.outdir.setText(d)
+
     def _set_busy(self, busy: bool):
         self.btn.setEnabled(not busy)
         self.path.setEnabled(not busy)
         self.preset.setEnabled(not busy)
         self.baro.setEnabled(not busy)
+        self.outdir.setEnabled(not busy)
+        self.stamp.setEnabled(not busy)
 
     # Orchestration
     def _process(self):
@@ -135,8 +197,12 @@ class RunEasyPanel(QWidget):
         preset = self._presets[name]
         baro = float(self.baro.value()) or None
 
+        out_dir_text = self.outdir.text().strip()
+        out_dir = Path(out_dir_text) if out_dir_text else None
+        stamp = self.stamp.text().strip() or None
+
         self._runner_thread = QThread(self)
-        self._runner = _Runner(src, preset, baro, None)
+        self._runner = _Runner(src, preset, baro, stamp, out_dir)
         self._runner.moveToThread(self._runner_thread)
         self._runner_thread.started.connect(self._runner.run)
         self._runner.started.connect(lambda: (self._set_busy(True), self.log.append("▶︎ Starting…")))
@@ -151,10 +217,11 @@ class RunEasyPanel(QWidget):
     def _on_failed(self, msg: str):
         self.log.append(f"❌ Failed: {msg}")
 
-    def _on_finished(self, out_dir: str):
+    def _on_finished(self, out_dir: str, summary: dict, artifacts: list[str]):
         self.log.append("✅ Done.")
         url = QUrl.fromLocalFile(out_dir)
         self.log.append(f'<a href="{url.toString()}">Open results directory</a>')
+
         manifest = Path(out_dir) / "summary.json"
         try:
             data = json.loads(manifest.read_text())
@@ -167,3 +234,18 @@ class RunEasyPanel(QWidget):
                 self.log.append(kv_text)
         except Exception:
             self.log.append("Summary unavailable.")
+
+        warns = list(summary.get("warnings", [])) if summary else []
+        errs = list(summary.get("errors", [])) if summary else []
+        for p in artifacts:
+            if p.endswith("__parse_summary.json"):
+                try:
+                    j = json.loads(Path(p).read_text())
+                    warns.extend(j.get("warnings", []))
+                    errs.extend(j.get("errors", []))
+                except Exception:
+                    continue
+        for e in errs:
+            self.log.append(f"❌ {e}")
+        for w in warns:
+            self.log.append(f"⚠️ {w}")
