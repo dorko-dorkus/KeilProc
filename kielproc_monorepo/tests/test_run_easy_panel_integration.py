@@ -8,48 +8,45 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
-def _stub_qt():
-    """Create minimal PySide6 stubs sufficient for MainWindow tests."""
-    QtWidgets = types.ModuleType("PySide6.QtWidgets")
+def _stub_tk():
+    """Create minimal tkinter stubs sufficient for MainWindow tests."""
+    tk = types.ModuleType("tkinter")
+    ttk = types.ModuleType("tkinter.ttk")
 
-    class DummyQMainWindow:
+    class DummyTk:
         def __init__(self, parent=None):
             pass
 
-        def setCentralWidget(self, w):
-            self.central = w
-
-    class DummyTabWidget:
+    class DummyNotebook:
         def __init__(self, parent=None):
             self._tabs = []
 
-        def insertTab(self, index, widget, label):
-            self._tabs.insert(index, (widget, label))
+        def insert(self, index, widget, text=""):
+            self._tabs.insert(index, (widget, text))
 
-        def setCurrentIndex(self, index):
-            self.current = index
+        def select(self, widget):
+            self.current = widget
 
-        def widget(self, index):
-            return self._tabs[index][0]
+        def tabs(self):
+            return [w for w, _ in self._tabs]
 
-        def tabText(self, index):
-            return self._tabs[index][1]
+        def tab(self, widget, option):
+            for w, label in self._tabs:
+                if w is widget and option == "text":
+                    return label
 
-        def count(self):
-            return len(self._tabs)
+        def pack(self, **kwargs):
+            pass
 
-    QtWidgets.QMainWindow = DummyQMainWindow
-    QtWidgets.QTabWidget = DummyTabWidget
+    tk.Tk = DummyTk
+    ttk.Notebook = DummyNotebook
 
-    base = types.ModuleType("PySide6")
-    base.QtWidgets = QtWidgets
-
-    sys.modules.setdefault("PySide6", base)
-    sys.modules.setdefault("PySide6.QtWidgets", QtWidgets)
+    sys.modules["tkinter"] = tk
+    sys.modules["tkinter.ttk"] = ttk
 
 
 def test_run_easy_tab_is_first(monkeypatch):
-    _stub_qt()
+    _stub_tk()
 
     # Provide a lightweight stub for RunEasyPanel so import succeeds
     run_easy_mod = types.ModuleType("app.gui.run_easy_panel")
@@ -64,6 +61,7 @@ def test_run_easy_tab_is_first(monkeypatch):
     mw_module = importlib.import_module("app.gui.main_window")
     win = mw_module.MainWindow()
 
-    assert win.tabs.count() == 1
-    assert win.tabs.tabText(0) == "Run Easy"
-    assert isinstance(win.tabs.widget(0), DummyPanel)
+    assert len(win.tabs.tabs()) == 1
+    tab_widget = win.tabs.tabs()[0]
+    assert win.tabs.tab(tab_widget, "text") == "Run Easy"
+    assert isinstance(tab_widget, DummyPanel)
