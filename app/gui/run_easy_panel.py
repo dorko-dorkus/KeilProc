@@ -143,10 +143,32 @@ class RunEasyPanel(ttk.Frame):
         self.stamp = ttk.Entry(row5, textvariable=self.stamp_var)
         self.stamp.pack(side="left", fill="x", expand=True)
 
-        # Process button
+        # Geometry fields
         row6 = ttk.Frame(self)
         row6.pack(fill="x", pady=2)
-        self.btn = ttk.Button(row6, text="Process", command=self._process)
+        ttk.Label(row6, text="Duct height (m, optional):").pack(side="left")
+        self.height_var = tk.StringVar()
+        self.height = ttk.Entry(row6, textvariable=self.height_var)
+        self.height.pack(side="left", fill="x", expand=True)
+
+        row7 = ttk.Frame(self)
+        row7.pack(fill="x", pady=2)
+        ttk.Label(row7, text="Duct width (m, optional):").pack(side="left")
+        self.width_var = tk.StringVar()
+        self.width = ttk.Entry(row7, textvariable=self.width_var)
+        self.width.pack(side="left", fill="x", expand=True)
+
+        row8 = ttk.Frame(self)
+        row8.pack(fill="x", pady=2)
+        ttk.Label(row8, text="Throat diameter (m, optional):").pack(side="left")
+        self.throat_var = tk.StringVar()
+        self.throat = ttk.Entry(row8, textvariable=self.throat_var)
+        self.throat.pack(side="left", fill="x", expand=True)
+
+        # Process button
+        row9 = ttk.Frame(self)
+        row9.pack(fill="x", pady=2)
+        self.btn = ttk.Button(row9, text="Process", command=self._process)
         self.btn.pack()
 
         # Log
@@ -175,7 +197,16 @@ class RunEasyPanel(ttk.Frame):
     def _set_busy(self, busy: bool):
         state = ["disabled"] if busy else ["!disabled"]
         self.btn.state(state)
-        for widget in [self.path, self.preset, self.baro, self.outdir, self.stamp]:
+        for widget in [
+            self.path,
+            self.preset,
+            self.baro,
+            self.outdir,
+            self.stamp,
+            self.height,
+            self.width,
+            self.throat,
+        ]:
             widget.state(state)
 
     # Orchestration
@@ -192,6 +223,29 @@ class RunEasyPanel(ttk.Frame):
         out_dir_text = self.outdir_var.get().strip()
         out_dir = Path(out_dir_text) if out_dir_text else None
         stamp = self.stamp_var.get().strip() or None
+
+        # Optional geometry overrides
+        geom_override = {}
+        h_text = self.height_var.get().strip()
+        w_text = self.width_var.get().strip()
+        t_text = self.throat_var.get().strip()
+        try:
+            if h_text:
+                geom_override["duct_height_m"] = float(h_text)
+            if w_text:
+                geom_override["duct_width_m"] = float(w_text)
+            if t_text:
+                geom_override["throat_diameter_m"] = float(t_text)
+        except ValueError:
+            self._append_log("⚠️ Geometry values must be numeric.")
+            return
+        if geom_override:
+            preset = SitePreset(
+                name=preset.name,
+                geometry={**preset.geometry, **geom_override},
+                instruments=preset.instruments,
+                defaults=preset.defaults,
+            )
 
         self._queue = queue.Queue()
         self._runner = _Runner(src, preset, baro, stamp, out_dir, self._queue)
