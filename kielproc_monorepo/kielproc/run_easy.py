@@ -12,7 +12,7 @@ exercised in isolation.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Callable
 import json
 import time
 
@@ -46,10 +46,15 @@ class OneClickError(Exception):
 class Orchestrator:
     """Coordinate parse → integrate → map → fit → translate → report."""
 
-    def __init__(self, run: RunInputs):
+    def __init__(self, run: RunInputs, progress_cb: Optional[Callable[[str], None]] = None):
         self.run = run
         self.artifacts: List[Path] = []
         self.summary: Dict = {"warnings": [], "errors": []}
+        self._progress_cb = progress_cb
+
+    def _progress(self, msg: str) -> None:
+        if self._progress_cb:
+            self._progress_cb(msg)
 
     # --- helpers -----------------------------------------------------
     def _stamp(self) -> str:
@@ -294,6 +299,7 @@ class Orchestrator:
     # --- public ------------------------------------------------------
     def run_all(self) -> Path:
         """Execute the full one-click pipeline and return the run directory."""
+        self._progress("Preflight…")
         self.preflight()
         stamp = self._stamp()
         out = Path(f"RUN_{stamp}")
@@ -313,11 +319,17 @@ class Orchestrator:
         )
         self.artifacts.append(context_path)
 
+        self._progress("Parsing…")
         self.parse(dirs["ports"])
+        self._progress("Integrating…")
         self.integrate(out)
+        self._progress("Mapping…")
         self.map(out)
+        self._progress("Fitting…")
         self.fit(out)
+        self._progress("Translating…")
         self.translate(out)
+        self._progress("Reporting…")
         self.report(out)
 
         # build manifest of outputs
@@ -342,6 +354,7 @@ class Orchestrator:
         manifest_path.write_text(json.dumps(manifest, indent=2))
         self.artifacts.append(manifest_path)
 
+        self._progress("Done")
         return out
 
 
@@ -352,8 +365,9 @@ def run_easy_legacy(
     site: SitePreset,
     baro_override_Pa: Optional[float] = None,
     run_stamp: Optional[str] = None,
+    progress_cb: Optional[Callable[[str], None]] = None,
 ) -> Path:
     """Run the full pipeline for a legacy workbook using ``SitePreset`` defaults."""
 
     run = RunInputs(src=src, site=site, baro_override_Pa=baro_override_Pa, run_stamp=run_stamp)
-    return Orchestrator(run).run_all()
+    return Orchestrator(run, progress_cb=progress_cb).run_all()
