@@ -9,16 +9,21 @@ Integrated GUI for Kiel + Wall-Static Baseline & Legacy Translation
 
 import sys
 import traceback
-import json, re
 from pathlib import Path
+
+# --- Make sibling packages importable when running this file directly
+#     (tests set pythonpath=.../kielproc_monorepo, so you don't see this there).
+_HERE = Path(__file__).resolve().parents[1]  # .../kielproc_monorepo
+_ROOT = _HERE.parent  # repo root containing 'app' and 'kielproc'
+for _p in (_ROOT, _HERE):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+import json, re
 import math
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import pandas as pd
-# Ensure repo root is importable when running as "python gui/app_gui.py"
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from ui_polish import (
     apply_style,
@@ -58,6 +63,12 @@ from kielproc.geometry import (
 )
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
+try:
+    # Optional tab: minimal operator UI
+    from app.gui.run_easy_panel import RunEasyPanel  # noqa: E402
+except Exception as _e:  # non-fatal
+    print(f"[RunEasy] import failed: {_e}", file=sys.stderr)
+    RunEasyPanel = None
 
 def _float_or_zero(value: str, default: float = 0.0) -> float:
     """Convert *value* to float, returning *default* when empty.
@@ -124,6 +135,15 @@ class App(tk.Tk):
         self.rowconfigure(0, weight=1)
 
         self._build()
+
+        # Prepend the one-click "Run Easy" tab if available
+        if RunEasyPanel is not None:
+            try:
+                run_easy = RunEasyPanel(self.nb)
+                self.nb.insert(0, run_easy, text="Run Easy")
+                self.nb.select(run_easy)
+            except Exception as _e:
+                print(f"[RunEasy] wiring failed: {_e}", file=sys.stderr)
 
     def _build(self):
         self.nb = ttk.Notebook(self)
