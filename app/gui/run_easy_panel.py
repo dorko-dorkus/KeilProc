@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
-import os
 import threading
 import queue
 import tkinter as tk
@@ -47,16 +46,15 @@ class _Runner(threading.Thread):
     def run(self):
         self.queue.put(("started",))
         try:
-            cwd = Path.cwd()
             if self.out_dir:
                 self.out_dir.mkdir(parents=True, exist_ok=True)
-                os.chdir(self.out_dir)
 
             res = run_easy_legacy(
                 self.src,
                 self.preset,
                 self.baro,
                 self.stamp,
+                output_base=self.out_dir,
                 progress_cb=lambda s: self.queue.put(("progress", s)),
             )
 
@@ -76,13 +74,10 @@ class _Runner(threading.Thread):
 
             out_path = Path(out)
             if not out_path.is_absolute():
-                out_path = (self.out_dir or cwd) / out_path
+                out_path = (self.out_dir or Path.cwd()) / out_path
             self.queue.put(("finished", str(out_path), summary, artifacts))
         except Exception as e:
             self.queue.put(("failed", str(e)))
-        finally:
-            if self.out_dir:
-                os.chdir(cwd)
 
 
 class RunEasyPanel(ttk.Frame):
@@ -221,7 +216,7 @@ class RunEasyPanel(ttk.Frame):
         baro_text = self.baro_var.get().strip()
         baro = float(baro_text) if baro_text else None
         out_dir_text = self.outdir_var.get().strip()
-        out_dir = Path(out_dir_text) if out_dir_text else None
+        out_dir = Path(out_dir_text).expanduser().resolve() if out_dir_text else None
         stamp = self.stamp_var.get().strip() or None
 
         # Optional geometry overrides
