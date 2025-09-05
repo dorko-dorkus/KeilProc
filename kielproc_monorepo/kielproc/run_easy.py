@@ -111,14 +111,16 @@ class Orchestrator:
         """Integrate per-port files into duct aggregates."""
         from .aggregate import integrate_run, RunConfig
         import math
+        from .geometry import Geometry, r_ratio, beta_from_geometry
+        from dataclasses import fields as dataclass_fields
 
         ports_dir = base_dir / "ports_csv"
 
-        geom = self.run.site.geometry or {}
-        h = geom.get("duct_height_m")
-        w = geom.get("duct_width_m")
+        geom_dict = self.run.site.geometry or {}
+        h = geom_dict.get("duct_height_m")
+        w = geom_dict.get("duct_width_m")
         if h is None or w is None:
-            d = geom.get("duct_diameter_m")
+            d = geom_dict.get("duct_diameter_m")
             if d:
                 A = math.pi * (float(d) ** 2) / 4.0
                 s = math.sqrt(A)
@@ -126,12 +128,29 @@ class Orchestrator:
         if h is None or w is None:
             h = w = 1.0  # fallback to keep pipeline moving
 
-        cfg = RunConfig(height_m=float(h), width_m=float(w), weights=geom.get("weights"))
+        cfg = RunConfig(height_m=float(h), width_m=float(w), weights=geom_dict.get("weights"))
+
+        valid = {f.name for f in dataclass_fields(Geometry)}
+        geom = None
+        try:
+            geom = Geometry(**{k: v for k, v in geom_dict.items() if k in valid})
+        except Exception:
+            geom = None
+
+        area_ratio = beta = None
+        if geom is not None:
+            try:
+                area_ratio = r_ratio(geom)
+                beta = beta_from_geometry(geom)
+            except Exception:
+                pass
 
         res = integrate_run(
             ports_dir,
             cfg,
             baro_cli_pa=self.run.baro_override_Pa,
+            area_ratio=area_ratio,
+            beta=beta,
         )
 
         outdir = base_dir / "_integrated"
