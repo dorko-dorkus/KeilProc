@@ -97,8 +97,18 @@ class RunEasyPanel(ttk.Frame):
         self._build()
 
     def _build(self):
-        # Preset row
-        row1 = ttk.Frame(self)
+        """Construct the UI with separate tabs for inputs and geometry."""
+
+        self.nb = ttk.Notebook(self)
+        self.nb.pack(fill="x", pady=2)
+
+        tab_inputs = ttk.Frame(self.nb)
+        tab_geom = ttk.Frame(self.nb)
+        self.nb.add(tab_inputs, text="Inputs")
+        self.nb.add(tab_geom, text="Geometry")
+
+        # --- Inputs tab -------------------------------------------------
+        row1 = ttk.Frame(tab_inputs)
         row1.pack(fill="x", pady=2)
         ttk.Label(row1, text="Site preset:").pack(side="left")
         self.preset_var = tk.StringVar(value=next(iter(self._presets.keys())))
@@ -107,72 +117,103 @@ class RunEasyPanel(ttk.Frame):
             textvariable=self.preset_var,
             values=sorted(self._presets.keys()),
             state="readonly",
+            width=20,
         )
-        self.preset.pack(side="left", fill="x", expand=True)
+        self.preset.pack(side="left")
 
-        # Input row
-        row2 = ttk.Frame(self)
+        row2 = ttk.Frame(tab_inputs)
         row2.pack(fill="x", pady=2)
         ttk.Label(row2, text="Workbook or folder:").pack(side="left")
         self.path_var = tk.StringVar()
-        self.path = ttk.Entry(row2, textvariable=self.path_var)
-        self.path.pack(side="left", fill="x", expand=True)
+        self.path = ttk.Entry(row2, textvariable=self.path_var, width=40)
+        self.path.pack(side="left")
         ttk.Button(row2, text="Browse…", command=self._browse).pack(side="left")
 
-        # Output directory
-        row3 = ttk.Frame(self)
+        row3 = ttk.Frame(tab_inputs)
         row3.pack(fill="x", pady=2)
         ttk.Label(row3, text="Output directory:").pack(side="left")
         self.outdir_var = tk.StringVar()
-        self.outdir = ttk.Entry(row3, textvariable=self.outdir_var)
-        self.outdir.pack(side="left", fill="x", expand=True)
+        self.outdir = ttk.Entry(row3, textvariable=self.outdir_var, width=40)
+        self.outdir.pack(side="left")
         ttk.Button(row3, text="Browse…", command=self._browse_outdir).pack(side="left")
 
-        # Baro override
-        row4 = ttk.Frame(self)
+        row4 = ttk.Frame(tab_inputs)
         row4.pack(fill="x", pady=2)
         ttk.Label(row4, text="Baro override (Pa, optional):").pack(side="left")
         self.baro_var = tk.StringVar()
-        self.baro = ttk.Entry(row4, textvariable=self.baro_var)
-        self.baro.pack(side="left", fill="x", expand=True)
+        self.baro = ttk.Entry(row4, textvariable=self.baro_var, width=10)
+        self.baro.pack(side="left")
 
-        # Run stamp
-        row5 = ttk.Frame(self)
+        row5 = ttk.Frame(tab_inputs)
         row5.pack(fill="x", pady=2)
         ttk.Label(row5, text="Run stamp (optional):").pack(side="left")
         self.stamp_var = tk.StringVar()
-        self.stamp = ttk.Entry(row5, textvariable=self.stamp_var)
-        self.stamp.pack(side="left", fill="x", expand=True)
+        self.stamp = ttk.Entry(row5, textvariable=self.stamp_var, width=15)
+        self.stamp.pack(side="left")
 
-        # Geometry fields
-        row6 = ttk.Frame(self)
-        row6.pack(fill="x", pady=2)
-        ttk.Label(row6, text="Duct height (m, optional):").pack(side="left")
-        self.height_var = tk.StringVar()
-        self.height = ttk.Entry(row6, textvariable=self.height_var)
-        self.height.pack(side="left", fill="x", expand=True)
-
-        row7 = ttk.Frame(self)
-        row7.pack(fill="x", pady=2)
-        ttk.Label(row7, text="Duct width (m, optional):").pack(side="left")
-        self.width_var = tk.StringVar()
-        self.width = ttk.Entry(row7, textvariable=self.width_var)
-        self.width.pack(side="left", fill="x", expand=True)
-
-        row8 = ttk.Frame(self)
-        row8.pack(fill="x", pady=2)
-        ttk.Label(row8, text="Throat diameter (m, optional):").pack(side="left")
-        self.throat_var = tk.StringVar()
-        self.throat = ttk.Entry(row8, textvariable=self.throat_var)
-        self.throat.pack(side="left", fill="x", expand=True)
-
-        # Process button
-        row9 = ttk.Frame(self)
+        row9 = ttk.Frame(tab_inputs)
         row9.pack(fill="x", pady=2)
         self.btn = ttk.Button(row9, text="Process", command=self._process)
         self.btn.pack()
 
-        # Log
+        # --- Geometry tab ----------------------------------------------
+        g1 = ttk.Frame(tab_geom)
+        g1.pack(fill="x", pady=2)
+        ttk.Label(g1, text="Duct height (m, optional):").pack(side="left")
+        self.height_var = tk.StringVar()
+        self.height = ttk.Entry(g1, textvariable=self.height_var, width=10)
+        self.height.pack(side="left")
+
+        g2 = ttk.Frame(tab_geom)
+        g2.pack(fill="x", pady=2)
+        ttk.Label(g2, text="Duct width (m, optional):").pack(side="left")
+        self.width_var = tk.StringVar()
+        self.width = ttk.Entry(g2, textvariable=self.width_var, width=10)
+        self.width.pack(side="left")
+
+        g3 = ttk.Frame(tab_geom)
+        g3.pack(fill="x", pady=2)
+        ttk.Label(g3, text="Throat diameter (m, optional):").pack(side="left")
+        self.throat_var = tk.StringVar()
+        self.throat = ttk.Entry(g3, textvariable=self.throat_var, width=10)
+        self.throat.pack(side="left")
+
+        g4 = ttk.Frame(tab_geom)
+        g4.pack(fill="x", pady=2)
+        ttk.Label(g4, text="Duct diameter (m, optional):").pack(side="left")
+        self.duct_diam_var = tk.StringVar()
+        self.duct_diam = ttk.Entry(g4, textvariable=self.duct_diam_var, width=10)
+        self.duct_diam.pack(side="left")
+
+        g5 = ttk.Frame(tab_geom)
+        g5.pack(fill="x", pady=2)
+        ttk.Label(g5, text="Throat width (m, optional):").pack(side="left")
+        self.throat_width_var = tk.StringVar()
+        self.throat_width = ttk.Entry(g5, textvariable=self.throat_width_var, width=10)
+        self.throat_width.pack(side="left")
+
+        g6 = ttk.Frame(tab_geom)
+        g6.pack(fill="x", pady=2)
+        ttk.Label(g6, text="Throat height (m, optional):").pack(side="left")
+        self.throat_height_var = tk.StringVar()
+        self.throat_height = ttk.Entry(g6, textvariable=self.throat_height_var, width=10)
+        self.throat_height.pack(side="left")
+
+        g7 = ttk.Frame(tab_geom)
+        g7.pack(fill="x", pady=2)
+        ttk.Label(g7, text="Static Kiel area As (m², optional):").pack(side="left")
+        self.static_port_area_var = tk.StringVar()
+        self.static_port_area = ttk.Entry(g7, textvariable=self.static_port_area_var, width=10)
+        self.static_port_area.pack(side="left")
+
+        g8 = ttk.Frame(tab_geom)
+        g8.pack(fill="x", pady=2)
+        ttk.Label(g8, text="Total Kiel area At_ports (m², optional):").pack(side="left")
+        self.total_port_area_var = tk.StringVar()
+        self.total_port_area = ttk.Entry(g8, textvariable=self.total_port_area_var, width=10)
+        self.total_port_area.pack(side="left")
+
+        # --- Log --------------------------------------------------------
         self.log = ScrolledText(self, height=10, state="normal")
         self.log.pack(fill="both", expand=True, pady=2)
 
@@ -198,7 +239,7 @@ class RunEasyPanel(ttk.Frame):
     def _set_busy(self, busy: bool):
         state = ["disabled"] if busy else ["!disabled"]
         self.btn.state(state)
-        for widget in [
+        widgets = [
             self.path,
             self.preset,
             self.baro,
@@ -207,8 +248,15 @@ class RunEasyPanel(ttk.Frame):
             self.height,
             self.width,
             self.throat,
-        ]:
-            widget.state(state)
+            getattr(self, "duct_diam", None),
+            getattr(self, "throat_width", None),
+            getattr(self, "throat_height", None),
+            getattr(self, "static_port_area", None),
+            getattr(self, "total_port_area", None),
+        ]
+        for widget in widgets:
+            if widget is not None:
+                widget.state(state)
 
     # Orchestration
     def _process(self):
