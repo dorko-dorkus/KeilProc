@@ -3,14 +3,11 @@
 
 This repository combines:
 - `kielproc/` — backend library for physics mapping, lag removal, Deming α/β, pooling, and plotting.
-- `gui/app_gui.py` — integrated Tk GUI (no patching needed).
-- `gui/duct_dp_visualizer_tk_original.py` — your original GUI preserved (for reference).
 - `tests/` — small sanity tests.
 
 ## Quick start
 ```bash
 python -m pip install -r requirements.txt -c constraints.txt
-python gui/app_gui.py
 ```
 
 ## GUI features
@@ -25,4 +22,3 @@ Files are written under the chosen Output directory: CSV tables and PNG plots.
 ## Notes
 - Dynamics are processed in samples; seconds derived from Sampling Hz.
 - Throat unknown is fine; geometry is optional for visual scaling only.
-- The original GUI is kept unmodified as `gui/duct_dp_visualizer_tk_original.py`.
