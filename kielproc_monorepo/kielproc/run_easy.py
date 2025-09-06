@@ -181,6 +181,11 @@ class Orchestrator:
             "q_t_pa": res.get("duct", {}).get("q_t_pa"),
             "delta_p_vent_est_pa": res.get("duct", {}).get("delta_p_vent_est_pa"),
         }
+        if area_ratio is not None:
+            ref_block["r"] = area_ratio
+        if beta is not None:
+            ref_block["beta"] = beta
+        self._venturi = {"r": area_ratio, "beta": beta}
         ref_json = outdir / "reference_block.json"
         ref_json.write_text(json.dumps(ref_block, indent=2))
 
@@ -322,6 +327,7 @@ class Orchestrator:
             if res.get("blocks_info"):
                 b0 = res["blocks_info"][0]
                 self._alpha_beta = {"alpha": b0.get("alpha"), "beta": b0.get("beta")}
+                self._lag = b0.get("lag_samples")
         except Exception as e:
             if self.strict:
                 raise OneClickError(f"fit: {e}")
@@ -434,24 +440,55 @@ class Orchestrator:
         self.report(out)
 
         # build manifest of outputs
-        tables = [str(p) for p in self.artifacts if p.suffix in {".csv", ".json"}]
-        plots = [str(p) for p in self.artifacts if p.suffix in {".png", ".pdf", ".svg"}]
-        key_vals: Dict[str, float] = {}
-        ref = next((p for p in self.artifacts if p.name == "reference_block.json"), None)
-        if ref and ref.exists():
+        tables = [str(p) for p in self.artifacts if p.suffix in {'.csv', '.json'}]
+        plots = [str(p) for p in self.artifacts if p.suffix in {'.png', '.pdf', '.svg'}]
+        key_vals: Dict[str, object] = {}
+        pooled = next((p for p in self.artifacts if p.name == 'alpha_beta_pooled.json'), None)
+        if pooled and pooled.exists():
             try:
-                ref_data = json.loads(ref.read_text())
-                for k in ("q_s_pa", "q_t_pa", "delta_p_vent_est_pa"):
-                    v = ref_data.get(k)
+                data = json.loads(pooled.read_text())
+                for k in ('alpha', 'beta'):
+                    v = data.get(k)
                     if v is not None:
                         key_vals[k] = v
             except Exception:
                 pass
-        if getattr(self, "_alpha_beta", None):
+        elif getattr(self, '_alpha_beta', None):
             key_vals.update({k: v for k, v in self._alpha_beta.items() if v is not None})
-
-        manifest = {"tables": tables, "plots": plots, "key_values": key_vals}
-        manifest_path = out / "summary.json"
+        if getattr(self, '_lag', None) is not None:
+            key_vals['lag_samples'] = self._lag
+        ref = next((p for p in self.artifacts if p.name == 'reference_block.json'), None)
+        if ref and ref.exists():
+            try:
+                ref_data = json.loads(ref.read_text())
+                mapping = {
+                    'q_s_pa': 'q_s_pa',
+                    'q_t_pa': 'q_t_pa',
+                    'delta_p_vent_est_pa': 'delta_p_vent_est_pa',
+                    'r': 'venturi_r',
+                    'beta': 'venturi_beta',
+                }
+                for src_key, dst_key in mapping.items():
+                    v = ref_data.get(src_key)
+                    if v is not None:
+                        key_vals[dst_key] = v
+            except Exception:
+                pass
+        span_file = next((p for p in self.artifacts if p.suffix == '.json' and ('setpoint' in p.name.lower() or 'span' in p.name.lower())), None)
+        if span_file and span_file.exists():
+            try:
+                span_data = json.loads(span_file.read_text())
+                if isinstance(span_data, dict):
+                    span = span_data.get('span')
+                    if span is not None:
+                        key_vals['transmitter_span'] = span
+                    mapping = span_data.get('mapping')
+                    if mapping is not None:
+                        key_vals['transmitter_setpoints'] = mapping
+            except Exception:
+                pass
+        manifest = {'tables': tables, 'plots': plots, 'key_values': key_vals}
+        manifest_path = out / 'summary.json'
         manifest_path.write_text(json.dumps(manifest, indent=2))
         self.artifacts.append(manifest_path)
 

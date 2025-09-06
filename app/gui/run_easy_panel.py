@@ -424,10 +424,13 @@ class RunEasyPanel(ttk.Frame):
             tables = data.get("tables", [])
             plots = data.get("plots", [])
             self._append_log(f"Tables: {len(tables)}, Plots: {len(plots)}")
+            for t in tables:
+                self._append_log(f"table: {t}")
+            for p in plots:
+                self._append_log(f"plot: {p}")
             kv = data.get("key_values", {})
-            if kv:
-                kv_text = ", ".join(f"{k}={v}" for k, v in kv.items())
-                self._append_log(kv_text)
+            for k, v in kv.items():
+                self._append_log(f"{k}={v}")
         except Exception:
             self._append_log("Summary unavailable.")
 
