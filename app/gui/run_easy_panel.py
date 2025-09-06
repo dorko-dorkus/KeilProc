@@ -230,23 +230,81 @@ class RunEasyPanel(ttk.Frame):
         h_text = self.height_var.get().strip()
         w_text = self.width_var.get().strip()
         t_text = self.throat_var.get().strip()
+        dd_text = self.duct_diam_var.get().strip() if hasattr(self, "duct_diam_var") else ""
+        tw_text = self.throat_width_var.get().strip() if hasattr(self, "throat_width_var") else ""
+        th_text = self.throat_height_var.get().strip() if hasattr(self, "throat_height_var") else ""
+        as_text = self.static_port_area_var.get().strip() if hasattr(self, "static_port_area_var") else ""
+        at_text = self.total_port_area_var.get().strip() if hasattr(self, "total_port_area_var") else ""
         try:
             if h_text:
                 geom_override["duct_height_m"] = float(h_text)
             if w_text:
                 geom_override["duct_width_m"] = float(w_text)
             if t_text:
-                geom_override["throat_diameter_m"] = float(t_text)
+                # convert diameter → area for downstream beta_from_geometry
+                import math
+                dt = float(t_text)
+                geom_override["throat_area_m2"] = math.pi * (dt**2) / 4.0
+            if dd_text:
+                import math
+                d = float(dd_text)
+                geom_override["duct_area_m2"] = math.pi * (d**2) / 4.0
+            if tw_text and th_text:
+                geom_override["throat_width_m"] = float(tw_text)
+                geom_override["throat_height_m"] = float(th_text)
+            if as_text:
+                geom_override["static_port_area_m2"] = float(as_text)
+            if at_text:
+                geom_override["total_port_area_m2"] = float(at_text)
         except ValueError:
             self._append_log("⚠️ Geometry values must be numeric.")
             return
+
+        # Convert diameter-only values in the PRESET too (so beta/r can be derived)
+        import math
+        pgeom = {**preset.geometry}
+        if ("duct_area_m2" not in pgeom) and (pgeom.get("duct_diameter_m")):
+            try:
+                d = float(pgeom["duct_diameter_m"])
+                pgeom["duct_area_m2"] = math.pi * (d**2) / 4.0
+            except Exception:
+                pass
+        if ("throat_area_m2" not in pgeom) and (pgeom.get("throat_diameter_m")):
+            try:
+                dt = float(pgeom["throat_diameter_m"])
+                pgeom["throat_area_m2"] = math.pi * (dt**2) / 4.0
+            except Exception:
+                pass
+
         if geom_override:
+            pgeom.update(geom_override)
             preset = SitePreset(
                 name=preset.name,
-                geometry={**preset.geometry, **geom_override},
+                geometry=pgeom,
                 instruments=preset.instruments,
                 defaults=preset.defaults,
             )
+
+        # Preflight gate for one-click completeness: need A1, At, As, At_ports
+        A1 = pgeom.get("duct_area_m2") or (
+            (float(h_text) * float(w_text)) if (h_text and w_text) else None
+        )
+        At = pgeom.get("throat_area_m2") or (
+            (float(tw_text) * float(th_text)) if (tw_text and th_text) else None
+        )
+        As = pgeom.get("static_port_area_m2")
+        At_ports = pgeom.get("total_port_area_m2")
+        if not (A1 and At and As and At_ports):
+            self._append_log(
+                "⚠️ Need duct area A1, throat area At, and Kiel areas As & At_ports for full pipeline."
+            )
+            return
+        try:
+            r = float(As) / float(At_ports)
+            beta = (float(At) / float(A1)) ** 0.5
+            self._append_log(f"Derived: r={r:.4g}, β={beta:.4g}")
+        except Exception:
+            pass
 
         self._queue = queue.Queue()
         self._runner = _Runner(src, preset, baro, stamp, out_dir, self._queue)
