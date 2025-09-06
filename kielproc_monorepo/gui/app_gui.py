@@ -54,9 +54,8 @@ from kielproc.legacy_results import compute_results as compute_results_cli
 from kielproc.qa import DEFAULT_W_MAX, DEFAULT_DELTA_OPP_MAX
 from kielproc.geometry import (
     Geometry,
-    plane_area,
+    duct_area,
     throat_area,
-    effective_upstream_area,
     r_ratio,
     beta_from_geometry,
 )
@@ -945,14 +944,12 @@ class App(tk.Tk):
         g = Geometry(
             duct_height_m=float(self.var_height.get()),
             duct_width_m=float(self.var_width.get()),
-            upstream_area_m2=A1,
-            throat_diameter_m=dt if dt else None,
+            duct_area_m2=A1,
             throat_area_m2=at if at and (dt is None) else None,
-            rho_default_kg_m3=float(self.var_rho.get()),
         )
-        As = plane_area(g)
+        As = duct_area(g)
         At = throat_area(g)
-        A1_eff = effective_upstream_area(g)
+        A1_eff = duct_area(g)
         warn = []
         if At >= As:
             warn.append("At >= As")

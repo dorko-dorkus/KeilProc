@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import math
 
 from kielproc.run_easy import Orchestrator, RunInputs, SitePreset
 
@@ -62,7 +63,9 @@ def test_map_ignores_unknown_geometry_keys(tmp_path):
     geom = {
         "duct_height_m": 1.0,
         "duct_width_m": 1.0,
-        "throat_diameter_m": 0.1,
+        "throat_area_m2": math.pi * (0.1 ** 2) / 4.0,
+        "static_port_area_m2": 2.0,
+        "total_port_area_m2": 1.0,
         # Extra field not recognized by Geometry dataclass
         "duct_diameter_m": 2.5,
     }

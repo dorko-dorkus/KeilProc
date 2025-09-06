@@ -15,9 +15,8 @@ from kielproc.report import write_summary_tables, plot_alignment
 from kielproc.qa import qa_indices, DEFAULT_DELTA_OPP_MAX, DEFAULT_W_MAX
 from kielproc.geometry import (
     Geometry,
-    plane_area,
+    duct_area,
     throat_area,
-    effective_upstream_area,
     r_ratio,
     beta_from_geometry,
 )
@@ -64,19 +63,17 @@ def map_verification_plane(csv_or_df: Union[Path, pd.DataFrame], qs_col: str,
         out["Time_s"] = out["Sample"] / float(sampling_hz)
 
     # Persist geometry fields
-    As = plane_area(geom)
+    As = duct_area(geom)
     At = throat_area(geom)
-    A1 = effective_upstream_area(geom)
+    A1 = As
     out["duct_height_m"] = geom.duct_height_m
     out["duct_width_m"] = geom.duct_width_m
     out["As_m2"] = As
-    out["upstream_area_m2"] = geom.upstream_area_m2
     out["A1_m2"] = A1
     out["At_m2"] = At
     out["r"] = r
     out["beta"] = beta
-    out["rho_default_kg_m3"] = geom.rho_default_kg_m3
-    out["A1_auto_from_As"] = geom.upstream_area_m2 is None
+    out["A1_auto_from_As"] = geom.duct_area_m2 is None
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(out_path, index=False)

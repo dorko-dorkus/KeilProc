@@ -1,5 +1,5 @@
-
 from __future__ import annotations
+
 from dataclasses import dataclass
 import math
 import pandas as pd
@@ -8,61 +8,53 @@ import numpy as np
 
 @dataclass
 class Geometry:
-    duct_height_m: float = 1.0
-    duct_width_m: float = 2.3
-    upstream_area_m2: float | None = None  # if None -> use plane area
-    throat_diameter_m: float | None = None
+    # duct
+    duct_width_m: float | None = None
+    duct_height_m: float | None = None
+    duct_area_m2: float | None = None
+
+    # venturi throat (RECTANGULAR)
+    throat_width_m: float | None = None
+    throat_height_m: float | None = None
     throat_area_m2: float | None = None
-    rho_default_kg_m3: float = 0.7
+
+    # Kiel probe ports (mapping)
+    static_port_area_m2: float | None = None  # As
+    total_port_area_m2: float | None = None   # At_ports (NOT the venturi throat area)
+
+    # legacy fields we now ignore; keep for tolerant loads
+    throat_diameter_m: float | None = None  # deprecated
 
 
-def plane_area(g: Geometry) -> float:
-    return g.duct_height_m * g.duct_width_m
+def _area_rect(w: float | None, h: float | None) -> float | None:
+    if w and h and w > 0 and h > 0:
+        return w * h
+    return None
 
 
-def effective_upstream_area(g: Geometry) -> float:
-    return g.upstream_area_m2 if g.upstream_area_m2 is not None else plane_area(g)
+def duct_area(g: Geometry) -> float | None:
+    return g.duct_area_m2 or _area_rect(g.duct_width_m, g.duct_height_m)
 
 
-def throat_area(g: Geometry) -> float:
-    if g.throat_area_m2 is not None:
-        return g.throat_area_m2
-    if g.throat_diameter_m is not None:
-        return math.pi * (g.throat_diameter_m ** 2) / 4
-    raise ValueError("Provide throat diameter or area")
+def throat_area(g: Geometry) -> float | None:
+    return g.throat_area_m2 or _area_rect(g.throat_width_m, g.throat_height_m)
 
 
-def r_ratio(g: Geometry) -> float:
-    return plane_area(g) / throat_area(g)
+def r_ratio(g: Geometry) -> float | None:
+    # As/At_ports (Kiel static-to-total port area ratio for qs→qt mapping)
+    if g.static_port_area_m2 and g.total_port_area_m2 and g.total_port_area_m2 > 0:
+        return g.static_port_area_m2 / g.total_port_area_m2
+    return None
 
 
-def beta_from_geometry(g: Geometry) -> float:
-    A1 = effective_upstream_area(g)
+def beta_from_geometry(g: Geometry) -> float | None:
+    # β ≜ Dt/D1 for circular; for noncircular use β = sqrt(At/A1) because A ∝ D^2
+    A1 = duct_area(g)
     At = throat_area(g)
-    return math.sqrt(At / A1)
+    if A1 and At and 0 < At < A1:
+        return math.sqrt(At / A1)
+    return None
 
-
-def geometry_summary(g: Geometry) -> dict:
-    """Return a dictionary of key geometric parameters.
-
-    Values are computed at full precision; callers may format for
-    display without altering the stored float values.
-    """
-    As = plane_area(g)
-    At = throat_area(g)
-    A1 = effective_upstream_area(g)
-    return {
-        "duct_height_m": g.duct_height_m,
-        "duct_width_m": g.duct_width_m,
-        "As_m2": As,
-        "upstream_area_m2": g.upstream_area_m2,
-        "A1_m2": A1,
-        "At_m2": At,
-        "r": r_ratio(g),
-        "beta": beta_from_geometry(g),
-        "rho_default_kg_m3": g.rho_default_kg_m3,
-        "A1_auto_from_As": g.upstream_area_m2 is None,
-    }
 
 @dataclass
 class DiffuserGeometry:
@@ -78,6 +70,7 @@ class DiffuserGeometry:
         D = self.D1 + (self.D2 - self.D1) * (z / max(self.L, 1e-12))
         return 0.5 * D
 
+
 def infer_geometry_from_table(df: pd.DataFrame) -> DiffuserGeometry | None:
     """
     Attempt to infer geometry from a legacy 'details' table.
@@ -85,20 +78,25 @@ def infer_geometry_from_table(df: pd.DataFrame) -> DiffuserGeometry | None:
     Returns DiffuserGeometry if enough fields present, else None.
     """
     cols = {c.lower(): c for c in df.columns}
+
     def get_val(*names):
         for n in names:
             if n.lower() in cols:
                 return df[cols[n.lower()]].iloc[0]
         return None
+
     D1 = get_val('D1', 'D_inlet', 'Diameter1')
     D2 = get_val('D2', 'D_outlet', 'Diameter2')
-    L  = get_val('L', 'Length', 'AxialLength')
+    L = get_val('L', 'Length', 'AxialLength')
+
     # unit harmonization: if numbers look like mm, convert to m (heuristic: >2.0 means mm for small ducts? Let user override outside)
     def to_m(v):
-        if v is None or pd.isna(v): return None
+        if v is None or pd.isna(v):
+            return None
         v = float(v)
         # if clearly mm (>= 50) and not a huge duct, convert to m
-        return v/1000.0 if v > 50 else v
+        return v / 1000.0 if v > 50 else v
+
     if D1 is not None and D2 is not None and L is not None:
         geo = DiffuserGeometry(D1=to_m(D1), D2=to_m(D2), L=to_m(L))
         geo.r_As_At = get_val('r', 'As/At', 'area_ratio') or None
@@ -109,24 +107,7 @@ def infer_geometry_from_table(df: pd.DataFrame) -> DiffuserGeometry | None:
 
 
 def planes_to_z(planes: np.ndarray, geom: DiffuserGeometry | None) -> np.ndarray:
-    """Map plane identifiers to axial positions anchored to geometry.
-
-    Parameters
-    ----------
-    planes:
-        Array of plane identifiers. These may already be axial positions in
-        meters or simply sequential indices (e.g., 0,1,2,...).
-    geom:
-        Optional :class:`DiffuserGeometry` providing the total length ``L`` for
-        scaling. If ``geom`` is ``None`` or the identifiers appear to already be
-        in meters, the input is returned unchanged.
-
-    Returns
-    -------
-    numpy.ndarray
-        Axial positions in meters spanning ``[0, geom.L]`` when indices are
-        provided, otherwise the original values.
-    """
+    """Map plane identifiers to axial positions anchored to geometry."""
     z = np.asarray(planes, dtype=float)
     if geom is None or z.size == 0:
         return z

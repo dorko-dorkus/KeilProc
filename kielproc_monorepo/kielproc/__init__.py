@@ -18,12 +18,10 @@ from .qa import qa_indices
 from .aggregate import RunConfig, integrate_run
 from .geometry import (
     Geometry,
-    plane_area,
-    effective_upstream_area,
+    duct_area,
     throat_area,
     r_ratio,
     beta_from_geometry,
-    geometry_summary,
 )
 from .legacy_results import ResultsConfig, compute_results as compute_legacy_results
 
@@ -37,7 +35,7 @@ __all__ = [
     "load_legacy_excel", "load_logger_csv", "unify_schema",
     "compute_translation_table", "apply_translation",
     "write_summary_tables", "plot_alignment", "qa_indices",
-    "Geometry", "plane_area", "effective_upstream_area", "throat_area", "r_ratio", "beta_from_geometry", "geometry_summary",
+    "Geometry", "duct_area", "throat_area", "r_ratio", "beta_from_geometry",
     "RunConfig", "integrate_run",
     "ResultsConfig", "compute_legacy_results",
 ]
