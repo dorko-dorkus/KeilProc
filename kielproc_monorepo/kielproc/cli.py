@@ -1,6 +1,6 @@
 
 from __future__ import annotations
-import argparse, json
+import argparse, json, shutil
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -33,6 +33,7 @@ def build_parser():
     oc.add_argument("--baro", type=float, default=None, help="Override barometric pressure in Pa")
     oc.add_argument("--stamp", type=str, default=None, help="Override run stamp YYYYMMDD_HHMM (NZT)")
     oc.add_argument("--out", type=Path, default=None, help="Output base directory (RUN_* will be created here)")
+    oc.add_argument("--bundle", action="store_true", help="Zip run directory into RUN_*__bundle.zip")
 
     i0 = sub.add_parser("results", help="Compute legacy-style results from a logger CSV")
     i0.add_argument("--csv", required=True, help="Input logger CSV path")
@@ -116,16 +117,18 @@ def main(argv=None):
             run_stamp=a.stamp,
             output_base=a.out,
         )
-        print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "out_dir": str(out),
-                    "summary": summary,
-                    "artifacts": artifacts,
-                }
-            )
-        )
+        bundle_zip = None
+        if a.bundle:
+            bundle_zip = shutil.make_archive(str(out) + "__bundle", "zip", root_dir=out)
+        res = {
+            "ok": True,
+            "out_dir": str(out),
+            "summary": summary,
+            "artifacts": artifacts,
+        }
+        if bundle_zip:
+            res["bundle_zip"] = bundle_zip
+        print(json.dumps(res))
     elif a.cmd == "results":
         cfg_dict = {}
         if a.config:
