@@ -151,6 +151,13 @@ class RunEasyPanel(ttk.Frame):
         self.stamp = ttk.Entry(row5, textvariable=self.stamp_var, width=15)
         self.stamp.pack(side="left")
 
+        row6 = ttk.Frame(tab_inputs)
+        row6.pack(fill="x", pady=2)
+        ttk.Label(row6, text="Translation β (optional):").pack(side="left")
+        self.beta_fit_var = tk.StringVar()
+        self.beta_fit = ttk.Entry(row6, textvariable=self.beta_fit_var, width=10)
+        self.beta_fit.pack(side="left")
+
         row9 = ttk.Frame(tab_inputs)
         row9.pack(fill="x", pady=2)
         self.btn = ttk.Button(row9, text="Process", command=self._process)
@@ -213,6 +220,13 @@ class RunEasyPanel(ttk.Frame):
         self.total_port_area = ttk.Entry(g8, textvariable=self.total_port_area_var, width=10)
         self.total_port_area.pack(side="left")
 
+        g9 = ttk.Frame(tab_geom)
+        g9.pack(fill="x", pady=2)
+        ttk.Label(g9, text="Venturi β (optional):").pack(side="left")
+        self.beta_var = tk.StringVar()
+        self.beta = ttk.Entry(g9, textvariable=self.beta_var, width=10)
+        self.beta.pack(side="left")
+
         # --- Log --------------------------------------------------------
         self.log = ScrolledText(self, height=10, state="normal")
         self.log.pack(fill="both", expand=True, pady=2)
@@ -245,6 +259,7 @@ class RunEasyPanel(ttk.Frame):
             self.baro,
             self.outdir,
             self.stamp,
+            self.beta_fit,
             self.height,
             self.width,
             self.throat,
@@ -253,6 +268,7 @@ class RunEasyPanel(ttk.Frame):
             getattr(self, "throat_height", None),
             getattr(self, "static_port_area", None),
             getattr(self, "total_port_area", None),
+            getattr(self, "beta", None),
         ]
         for widget in widgets:
             if widget is not None:
@@ -272,17 +288,23 @@ class RunEasyPanel(ttk.Frame):
         out_dir_text = self.outdir_var.get().strip()
         out_dir = Path(out_dir_text).expanduser().resolve() if out_dir_text else None
         stamp = self.stamp_var.get().strip() or None
+        beta_fit_text = (
+            (self.beta_fit_var.get() if hasattr(self, "beta_fit_var") else "")
+        )
+        beta_fit_text = (beta_fit_text or "").strip()
 
         # Optional geometry overrides
         geom_override = {}
-        h_text = self.height_var.get().strip()
-        w_text = self.width_var.get().strip()
-        t_text = self.throat_var.get().strip()
-        dd_text = self.duct_diam_var.get().strip() if hasattr(self, "duct_diam_var") else ""
-        tw_text = self.throat_width_var.get().strip() if hasattr(self, "throat_width_var") else ""
-        th_text = self.throat_height_var.get().strip() if hasattr(self, "throat_height_var") else ""
-        as_text = self.static_port_area_var.get().strip() if hasattr(self, "static_port_area_var") else ""
-        at_text = self.total_port_area_var.get().strip() if hasattr(self, "total_port_area_var") else ""
+        defaults_override = {}
+        h_text = (self.height_var.get() or "").strip()
+        w_text = (self.width_var.get() or "").strip()
+        t_text = (self.throat_var.get() or "").strip()
+        dd_text = (self.duct_diam_var.get() or "").strip() if hasattr(self, "duct_diam_var") else ""
+        tw_text = (self.throat_width_var.get() or "").strip() if hasattr(self, "throat_width_var") else ""
+        th_text = (self.throat_height_var.get() or "").strip() if hasattr(self, "throat_height_var") else ""
+        as_text = (self.static_port_area_var.get() or "").strip() if hasattr(self, "static_port_area_var") else ""
+        at_text = (self.total_port_area_var.get() or "").strip() if hasattr(self, "total_port_area_var") else ""
+        beta_text = (self.beta_var.get() or "").strip() if hasattr(self, "beta_var") else ""
         try:
             if h_text:
                 geom_override["duct_height_m"] = float(h_text)
@@ -304,6 +326,10 @@ class RunEasyPanel(ttk.Frame):
                 geom_override["static_port_area_m2"] = float(as_text)
             if at_text:
                 geom_override["total_port_area_m2"] = float(at_text)
+            if beta_text:
+                geom_override["beta"] = float(beta_text)
+            if beta_fit_text:
+                defaults_override["beta_translate"] = float(beta_fit_text)
         except ValueError:
             self._append_log("⚠️ Geometry values must be numeric.")
             return
@@ -324,16 +350,18 @@ class RunEasyPanel(ttk.Frame):
             except Exception:
                 pass
 
-        if geom_override:
+        if geom_override or defaults_override:
             pgeom.update(geom_override)
+            defaults = dict(preset.defaults)
+            defaults.update(defaults_override)
             preset = SitePreset(
                 name=preset.name,
                 geometry=pgeom,
                 instruments=preset.instruments,
-                defaults=preset.defaults,
+                defaults=defaults,
             )
 
-        # Preflight gate for one-click completeness: need A1, At, As, At_ports
+        # Preflight gate for one-click completeness: need r and beta
         A1 = pgeom.get("duct_area_m2") or (
             (float(h_text) * float(w_text)) if (h_text and w_text) else None
         )
@@ -342,14 +370,15 @@ class RunEasyPanel(ttk.Frame):
         )
         As = pgeom.get("static_port_area_m2")
         At_ports = pgeom.get("total_port_area_m2")
-        if not (A1 and At and As and At_ports):
+        beta_override = pgeom.get("beta")
+        if not (As and At_ports and (beta_override or (A1 and At))):
             self._append_log(
-                "⚠️ Need duct area A1, throat area At, and Kiel areas As & At_ports for full pipeline."
+                "⚠️ Need duct area A1 and throat area At (or β) and Kiel areas As & At_ports for full pipeline."
             )
             return
         try:
             r = float(As) / float(At_ports)
-            beta = (float(At) / float(A1)) ** 0.5
+            beta = float(beta_override) if beta_override is not None else (float(At) / float(A1)) ** 0.5
             self._append_log(f"Derived: r={r:.4g}, β={beta:.4g}")
         except Exception:
             pass

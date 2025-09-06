@@ -141,11 +141,14 @@ class Orchestrator:
         except Exception:
             geom = None
 
-        area_ratio = beta = None
+        area_ratio = geom_dict.get("r") or geom_dict.get("area_ratio")
+        beta = geom_dict.get("beta")
         if geom is not None:
             try:
-                area_ratio = r_ratio(geom)
-                beta = beta_from_geometry(geom)
+                if area_ratio is None:
+                    area_ratio = r_ratio(geom)
+                if beta is None:
+                    beta = beta_from_geometry(geom)
             except Exception:
                 pass
 
@@ -300,6 +303,7 @@ class Orchestrator:
         block_specs = {Path(p).stem: p for p in mapped}
         outdir = base_dir / "_fit"
         outdir.mkdir(parents=True, exist_ok=True)
+        beta_override = self.run.site.defaults.get("beta_translate")
         try:
             res = fit_alpha_beta(
                 block_specs,
@@ -308,6 +312,7 @@ class Orchestrator:
                 lambda_ratio=1.0,
                 max_lag=300,
                 outdir=outdir,
+                beta_override=beta_override,
             )
             for k in ("per_block_csv", "per_block_json", "pooled_csv", "pooled_json", "align_png"):
                 v = res.get(k)
