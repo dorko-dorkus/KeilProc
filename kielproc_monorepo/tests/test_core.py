@@ -82,7 +82,7 @@ def test_throat_area_requires_input():
     assert beta_from_geometry(g) is None
 
 
-from kielproc_gui_adapter import map_verification_plane
+from kielproc.gui_adapter import map_verification_plane
 
 
 def test_map_verification_plane_persists_geometry(tmp_path):

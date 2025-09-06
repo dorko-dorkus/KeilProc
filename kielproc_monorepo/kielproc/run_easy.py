@@ -194,7 +194,7 @@ class Orchestrator:
     
     def map(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Build velocity maps from integrated data."""
-        from kielproc_gui_adapter import process_legacy_parsed_csv
+        from .gui_adapter import process_legacy_parsed_csv
         from kielproc.physics import map_qs_to_qt
         from kielproc.visuals import render_velocity_heatmap
         from .geometry import Geometry, r_ratio
@@ -290,7 +290,7 @@ class Orchestrator:
 
     def fit(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Fit calibration models."""
-        from kielproc_gui_adapter import fit_alpha_beta
+        from .gui_adapter import fit_alpha_beta
 
         mapped = getattr(self, "_mapped_csvs", [])
         if not mapped:
@@ -329,7 +329,7 @@ class Orchestrator:
 
     def translate(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Generate control-system lookup tables."""
-        from kielproc_gui_adapter import translate_piccolo
+        from .gui_adapter import translate_piccolo
 
         if not getattr(self, "_alpha_beta", None) or not getattr(self, "_mapped_csvs", None):
             msg = "translate: missing fit results or mapped data"
@@ -359,7 +359,7 @@ class Orchestrator:
 
     def report(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Emit consolidated HTML/PDF reports."""
-        from kielproc_gui_adapter import legacy_results_from_csv
+        from .gui_adapter import legacy_results_from_csv
         from kielproc.legacy_results import ResultsConfig
         import math
 

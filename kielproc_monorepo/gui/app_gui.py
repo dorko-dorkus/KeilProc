@@ -35,7 +35,7 @@ from ui_polish import (
 )
 
 # Adapter functions into the kielproc backend
-from kielproc_gui_adapter import (
+from kielproc.gui_adapter import (
     map_verification_plane,
     map_from_tot_and_static,
     fit_alpha_beta,

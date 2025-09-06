@@ -23,7 +23,7 @@ kielproc = "kielproc.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["kielproc*"]
+include = ["kielproc", "kielproc.*"]
 exclude = []
 
 [tool.pytest.ini_options]
