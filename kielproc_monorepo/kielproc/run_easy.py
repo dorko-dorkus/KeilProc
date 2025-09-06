@@ -16,6 +16,8 @@ from typing import Optional, Dict, List, Callable
 import json
 import time
 
+from .aggregate import integrate_run, RunConfig, discover_pairs
+
 NZT = "Pacific/Auckland"
 
 
@@ -113,7 +115,6 @@ class Orchestrator:
 
     def integrate(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Integrate per-port files into duct aggregates."""
-        from .aggregate import integrate_run, RunConfig
         import math
         from .geometry import Geometry, r_ratio, beta_from_geometry
         from dataclasses import fields as dataclass_fields
@@ -196,7 +197,6 @@ class Orchestrator:
         from kielproc_gui_adapter import process_legacy_parsed_csv
         from kielproc.physics import map_qs_to_qt
         from kielproc.visuals import render_velocity_heatmap
-        from .aggregate import _discover_pairs
         from .geometry import Geometry, r_ratio
 
         ports_dir = base_dir / "ports_csv"
@@ -233,7 +233,7 @@ class Orchestrator:
             self._pairs = pairs
             return
 
-        pairs, skipped = _discover_pairs(ports_dir, "*.csv")
+        pairs, skipped = discover_pairs(ports_dir, "*.csv")
         for name, reason in skipped:
             self.summary["warnings"].append(f"map {name}: {reason}")
         if not pairs:

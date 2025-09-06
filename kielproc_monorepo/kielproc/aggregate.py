@@ -108,6 +108,19 @@ def _discover_pairs(run_dir: Path, file_glob: str) -> tuple[list[tuple[str, Path
     pairs.sort(key=lambda kv: int(kv[0][1:]))
     return pairs, skipped
 
+
+def discover_pairs(run_dir: Path, file_glob: str) -> tuple[list[tuple[str, Path]], list[tuple[str, str]]]:
+    """Public wrapper exposing :func:`_discover_pairs`.
+
+    Parameters
+    ----------
+    run_dir:
+        Directory containing port CSV files.
+    file_glob:
+        Glob pattern used to discover candidate CSV files.
+    """
+    return _discover_pairs(run_dir, file_glob)
+
 R = 287.05  # J/(kg·K)
 
 # ——— Normalizer utilities ———
