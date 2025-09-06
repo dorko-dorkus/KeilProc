@@ -53,6 +53,7 @@ class Orchestrator:
         self.run = run
         self.artifacts: list[Path] = []
         self.summary: dict[str, list[str]] = {"warnings": [], "errors": []}
+        self._pairs: list[tuple[str, Path]] = []
         self._progress_cb = progress_cb
         # strict mode: escalate critical-path issues to hard failures
         # enabled via RunInputs defaults (see run_easy_legacy signature)
