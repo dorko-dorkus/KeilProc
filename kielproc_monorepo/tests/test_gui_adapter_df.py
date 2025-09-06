@@ -1,5 +1,6 @@
 import pandas as pd
 from pathlib import Path
+import math
 from kielproc.geometry import Geometry
 from kielproc_gui_adapter import (
     map_from_tot_and_static,
@@ -17,7 +18,13 @@ def test_map_from_tot_and_static_with_dataframe(tmp_path: Path):
         "p_t": [10.0, 11.0],
         "p_s": [1.0, 1.2],
     })
-    geom = Geometry(duct_height_m=1.0, duct_width_m=1.0, throat_diameter_m=0.1)
+    geom = Geometry(
+        duct_height_m=1.0,
+        duct_width_m=1.0,
+        throat_area_m2=math.pi * (0.1 ** 2) / 4.0,
+        static_port_area_m2=2.0,
+        total_port_area_m2=1.0,
+    )
     out = tmp_path / "mapped.csv"
     res_path = map_from_tot_and_static(df, "p_t", "p_s", geom, None, out)
     out_df = pd.read_csv(res_path)
@@ -61,7 +68,13 @@ def test_compute_setpoints_from_dataframe(tmp_path: Path):
 
 def test_process_legacy_parsed_csv(tmp_path: Path):
     df = pd.DataFrame({"VP": [1.0, 2.0, 3.0]})
-    geom = Geometry(duct_height_m=1.0, duct_width_m=1.0, throat_diameter_m=0.1)
+    geom = Geometry(
+        duct_height_m=1.0,
+        duct_width_m=1.0,
+        throat_area_m2=math.pi * (0.1 ** 2) / 4.0,
+        static_port_area_m2=2.0,
+        total_port_area_m2=1.0,
+    )
     out = tmp_path / "legacy_qs_qp_dpvent.csv"
     wrote, res_df = process_legacy_parsed_csv(df, geom, None, out)
     assert wrote == out
