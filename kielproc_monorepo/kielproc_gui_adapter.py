@@ -94,6 +94,7 @@ def fit_alpha_beta(
     q_mean_col: str = "q_mean",
     qa_gate_opp: float | None = DEFAULT_DELTA_OPP_MAX,
     qa_gate_w: float | None = DEFAULT_W_MAX,
+    beta_override: float | None = None,
 ) -> Dict[str, object]:
     blocks = {name: _df_from(path) for name, path in block_specs.items()}
     per_block, pooled = compute_translation_table(
@@ -102,6 +103,7 @@ def fit_alpha_beta(
         picc_key=piccolo_col,
         lambda_ratio=lambda_ratio,
         max_lag=max_lag,
+        beta_override=beta_override,
     )
 
     # QA indices similar to CLI
@@ -172,6 +174,7 @@ def fit_alpha_beta_from_block_csv(
     q_mean_col: str = "q_mean",
     qa_gate_opp: float | None = DEFAULT_DELTA_OPP_MAX,
     qa_gate_w: float | None = DEFAULT_W_MAX,
+    beta_override: float | None = None,
 ) -> Dict[str, object]:
     """Fit α,β from a piccolo CSV, locating reference data automatically.
 
@@ -233,6 +236,7 @@ def fit_alpha_beta_from_block_csv(
         q_mean_col=q_mean_col,
         qa_gate_opp=qa_gate_opp,
         qa_gate_w=qa_gate_w,
+        beta_override=beta_override,
     )
 
 def translate_piccolo(csv_or_df: Union[Path, pd.DataFrame], alpha: float, beta: float,
