@@ -2,7 +2,7 @@ import pandas as pd
 from pathlib import Path
 import math
 from kielproc.geometry import Geometry
-from kielproc_gui_adapter import (
+from kielproc.gui_adapter import (
     map_from_tot_and_static,
     translate_piccolo,
     legacy_results_from_csv,
