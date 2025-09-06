@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 import threading
 import queue
+import inspect
 import tkinter as tk
 from tkinter import ttk, filedialog
 from tkinter.scrolledtext import ScrolledText
@@ -49,13 +50,18 @@ class _Runner(threading.Thread):
             if self.out_dir:
                 self.out_dir.mkdir(parents=True, exist_ok=True)
 
+            kwargs = {
+                "output_base": self.out_dir,
+                "progress_cb": lambda s: self.queue.put(("progress", s)),
+            }
+            if "strict" in inspect.signature(run_easy_legacy).parameters:
+                kwargs["strict"] = True
             res = run_easy_legacy(
                 self.src,
                 self.preset,
                 self.baro,
                 self.stamp,
-                output_base=self.out_dir,
-                progress_cb=lambda s: self.queue.put(("progress", s)),
+                **kwargs,
             )
 
             summary = {}
@@ -270,7 +276,8 @@ class RunEasyPanel(ttk.Frame):
                 self.after(100, self._poll_queue)
 
     def _on_failed(self, msg: str):
-        self._append_log(f"❌ Failed: {msg}")
+        friendly = msg.replace("deltpVent", "Δp (Venturi)")
+        self._append_log(f"❌ {friendly}")
 
     def _on_finished(self, out_dir: str, summary: dict, artifacts: list[str]):
         self._append_log("✅ Done.")

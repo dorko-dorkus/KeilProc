@@ -49,9 +49,12 @@ class Orchestrator:
 
     def __init__(self, run: RunInputs, progress_cb: Optional[Callable[[str], None]] = None):
         self.run = run
-        self.artifacts: List[Path] = []
+        self.artifacts: list[Path] = []
         self.summary: Dict = {"warnings": [], "errors": []}
         self._progress_cb = progress_cb
+        # strict mode: escalate critical-path issues to hard failures
+        # enabled via RunInputs defaults (see run_easy_legacy signature)
+        self.strict: bool = getattr(run, "strict", False)
 
     def _progress(self, msg: str) -> None:
         if self._progress_cb:
@@ -105,7 +108,8 @@ class Orchestrator:
                 self.artifacts.append(j)
         except Exception as e:
             self.summary["errors"].append(f"parse: {e}")
-            raise
+            if self.strict:
+                raise
 
     def integrate(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Integrate per-port files into duct aggregates."""
@@ -230,7 +234,10 @@ class Orchestrator:
         for name, reason in skipped:
             self.summary["warnings"].append(f"map {name}: {reason}")
         if not pairs:
-            self.summary["warnings"].append("map: no port CSVs available")
+            msg = "map: no port CSVs available"
+            if self.strict:
+                raise OneClickError(msg)
+            self.summary["warnings"].append(msg)
             self._pairs = []
             return
 
@@ -258,8 +265,10 @@ class Orchestrator:
                     self.summary["warnings"].append(
                         f"map {csv.name}: throat missing; wrote qp only (no deltpVent)."
                     )
-                except Exception:
-                    self.summary["warnings"].append(f"map {csv.name}: {e}")
+                except Exception as e2:
+                    if self.strict:
+                        raise OneClickError(f"map: {csv.name}: {e2}")
+                    self.summary["warnings"].append(f"map: {csv.name}: {e2}")
 
         try:
             png = render_velocity_heatmap(mapped_dir, pairs, self.run.baro_override_Pa)
@@ -269,6 +278,12 @@ class Orchestrator:
 
         self._pairs = pairs
 
+        if not getattr(self, "_mapped_csvs", None):
+            msg = "map: no mapped results produced"
+            if self.strict:
+                raise OneClickError(msg)
+            self.summary["warnings"].append(msg)
+
 
     def fit(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Fit calibration models."""
@@ -276,7 +291,10 @@ class Orchestrator:
 
         mapped = getattr(self, "_mapped_csvs", [])
         if not mapped:
-            self.summary["warnings"].append("fit: no mapped CSVs available")
+            msg = "fit: no mapped CSVs available"
+            if self.strict:
+                raise OneClickError(msg)
+            self.summary["warnings"].append(msg)
             return
 
         block_specs = {Path(p).stem: p for p in mapped}
@@ -300,6 +318,8 @@ class Orchestrator:
                 b0 = res["blocks_info"][0]
                 self._alpha_beta = {"alpha": b0.get("alpha"), "beta": b0.get("beta")}
         except Exception as e:
+            if self.strict:
+                raise OneClickError(f"fit: {e}")
             self.summary["warnings"].append(f"fit: {e}")
 
     def translate(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
@@ -307,7 +327,10 @@ class Orchestrator:
         from kielproc_gui_adapter import translate_piccolo
 
         if not getattr(self, "_alpha_beta", None) or not getattr(self, "_mapped_csvs", None):
-            self.summary["warnings"].append("translate: missing fit results or mapped data")
+            msg = "translate: missing fit results or mapped data"
+            if self.strict:
+                raise OneClickError(msg)
+            self.summary["warnings"].append(msg)
             return
 
         alpha = self._alpha_beta.get("alpha")
@@ -325,6 +348,8 @@ class Orchestrator:
             self.artifacts.append(out_path)
             self._translated_csv = out_path
         except Exception as e:
+            if self.strict:
+                raise OneClickError(f"translate: {e}")
             self.summary["warnings"].append(f"translate: {e}")
 
     def report(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
@@ -335,7 +360,10 @@ class Orchestrator:
 
         csv = getattr(self, "_translated_csv", None)
         if not csv:
-            self.summary["warnings"].append("report: no translated CSV available")
+            msg = "report: no translated CSV available"
+            if self.strict:
+                raise OneClickError(msg)
+            self.summary["warnings"].append(msg)
             return
 
         geom = self.run.site.geometry or {}
@@ -359,6 +387,8 @@ class Orchestrator:
             json_out.write_text(json.dumps(res, indent=2))
             self.artifacts.append(json_out)
         except Exception as e:
+            if self.strict:
+                raise OneClickError(f"report: {e}")
             self.summary["warnings"].append(f"report: {e}")
 
     # --- public ------------------------------------------------------
@@ -420,6 +450,9 @@ class Orchestrator:
         manifest_path.write_text(json.dumps(manifest, indent=2))
         self.artifacts.append(manifest_path)
 
+        # optional strict postcondition: ensure we produced something non-trivial
+        if self.strict and not (tables or plots):
+            raise OneClickError("report: no tables/plots produced")
         self._progress("Done")
         return out
 
@@ -431,9 +464,9 @@ def run_easy_legacy(
     site: SitePreset,
     baro_override_Pa: Optional[float] = None,
     run_stamp: Optional[str] = None,
-    *,
     output_base: Optional[Path] = None,
     progress_cb: Optional[Callable[[str], None]] = None,
+    strict: bool = False,
 ) -> tuple[Path, Dict, List[str]]:
     """Run the full pipeline for a legacy workbook using ``SitePreset`` defaults.
 
@@ -452,6 +485,8 @@ def run_easy_legacy(
         run_stamp=run_stamp,
         output_base=output_base,
     )
+    # stash strict flag onto RunInputs for Orchestrator to read
+    setattr(run, "strict", strict)
     orch = Orchestrator(run, progress_cb=progress_cb)
     out = orch.run_all()
     # return triple so app GUI can display warnings/plots/tables
