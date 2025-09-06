@@ -4,10 +4,8 @@ Comprehensive processing suite for differential pressure data from coal mill duc
 
 ## Repository structure
 
-- `kielproc_monorepo/` – combined library, GUI and legacy tools.
+- `kielproc_monorepo/` – combined library and legacy tools.
   - `kielproc/` – backend for physics mapping, lag removal, Deming regression, pooling and reporting.
-  - `gui/` – Tkinter application `app_gui.py` and the original reference GUI.
-  - `duct_dp_visualizer.py` – legacy Excel/CSV analyzer (GUI and CLI).
   - `tests/` – basic sanity tests built with `pytest`.
   - `Design_and_Validation_Report.pdf`, `Holistic_Legacy_Integration_and_Verification_Plan.pdf` – project documentation.
 
@@ -15,14 +13,7 @@ Comprehensive processing suite for differential pressure data from coal mill duc
 
 ```bash
 python -m pip install -r kielproc_monorepo/requirements.txt -c kielproc_monorepo/constraints.txt
-python kielproc_monorepo/gui/app_gui.py  # launch the main GUI
-```
-
-Legacy visualizer usage:
-
-```bash
-python kielproc_monorepo/duct_dp_visualizer.py            # PySimpleGUI
-python kielproc_monorepo/duct_dp_visualizer.py --cli --help  # CLI options
+python app/gui/main_window.py  # launch the Run Easy GUI
 ```
 
 ## Pre-start checks
@@ -34,13 +25,13 @@ python kielproc_monorepo/duct_dp_visualizer.py --cli --help  # CLI options
 ## Windows installer
 
 ```bash
-cd kielproc_monorepo
-pyinstaller --noconsole --name KielProc gui/app_gui.py
+cd app
+pyinstaller --noconsole --name KielProc gui/main_window.py
 cd ..
 ISCC tools/installer/kielproc.iss
 ```
 
-The PyInstaller step writes `kielproc_monorepo/dist/KielProc/KielProc.exe`.
+The PyInstaller step writes `app/dist/KielProc/KielProc.exe`.
 The Inno Setup script creates `tools/installer/Output/KielProcInstaller.exe`.
 
 
