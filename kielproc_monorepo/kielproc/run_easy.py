@@ -12,7 +12,7 @@ exercised in isolation.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, List, Callable
+from typing import Optional, Callable
 import json
 import time
 
@@ -52,7 +52,7 @@ class Orchestrator:
     def __init__(self, run: RunInputs, progress_cb: Optional[Callable[[str], None]] = None):
         self.run = run
         self.artifacts: list[Path] = []
-        self.summary: Dict = {"warnings": [], "errors": []}
+        self.summary: dict[str, list[str]] = {"warnings": [], "errors": []}
         self._progress_cb = progress_cb
         # strict mode: escalate critical-path issues to hard failures
         # enabled via RunInputs defaults (see run_easy_legacy signature)
@@ -69,7 +69,7 @@ class Orchestrator:
         # Assume system clock already set to NZT to avoid tz deps.
         return time.strftime("%Y%m%d_%H%M")
 
-    def _mkdirs(self, base: Path) -> Dict[str, Path]:
+    def _mkdirs(self, base: Path) -> dict[str, Path]:
         base.mkdir(parents=True, exist_ok=True)
         ports = base / "ports_csv"
         ports.mkdir(exist_ok=True)
@@ -440,9 +440,9 @@ class Orchestrator:
         self.report(out)
 
         # build manifest of outputs
-        tables = [str(p) for p in self.artifacts if p.suffix in {'.csv', '.json'}]
-        plots = [str(p) for p in self.artifacts if p.suffix in {'.png', '.pdf', '.svg'}]
-        key_vals: Dict[str, object] = {}
+        tables = [str(p) for p in self.artifacts if p.suffix in {".csv", ".json"}]
+        plots = [str(p) for p in self.artifacts if p.suffix in {".png", ".pdf", ".svg"}]
+        key_vals: dict[str, object] = {}
         pooled = next((p for p in self.artifacts if p.name == 'alpha_beta_pooled.json'), None)
         if pooled and pooled.exists():
             try:
@@ -509,7 +509,7 @@ def run_easy_legacy(
     output_base: Optional[Path] = None,
     progress_cb: Optional[Callable[[str], None]] = None,
     strict: bool = False,
-) -> tuple[Path, Dict, List[str]]:
+) -> tuple[Path, dict, list[str]]:
     """Run the full pipeline for a legacy workbook using ``SitePreset`` defaults.
 
     Returns

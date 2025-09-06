@@ -24,6 +24,7 @@ from .geometry import (
     beta_from_geometry,
 )
 from .legacy_results import ResultsConfig, compute_results as compute_legacy_results
+from .run_easy import SitePreset, RunInputs, OneClickError, Orchestrator, run_easy_legacy
 
 __all__ = [
     "__version__",
@@ -38,4 +39,5 @@ __all__ = [
     "Geometry", "duct_area", "throat_area", "r_ratio", "beta_from_geometry",
     "RunConfig", "integrate_run",
     "ResultsConfig", "compute_legacy_results",
+    "SitePreset", "RunInputs", "OneClickError", "Orchestrator", "run_easy_legacy",
 ]
