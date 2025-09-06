@@ -183,12 +183,13 @@ class Orchestrator:
 
         self._pairs = res.get("pairs", [])
 
+    
     def map(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Build velocity maps from integrated data."""
         from kielproc_gui_adapter import process_legacy_parsed_csv
         from kielproc.physics import map_qs_to_qt
         from kielproc.visuals import render_velocity_heatmap
-        from .aggregate import _port_id_from_stem
+        from .aggregate import _discover_pairs
         from .geometry import Geometry, r_ratio
 
         ports_dir = base_dir / "ports_csv"
@@ -210,39 +211,55 @@ class Orchestrator:
             geom = None
 
         self._mapped_csvs: list[Path] = []
-        pairs = []
-        for csv in sorted(ports_dir.glob("*.csv")):
+        pairs: list[tuple[str, Path]] = []
+
+        if geom is None:
+            self.summary["warnings"].append("map: geometry unavailable; skipping mapping")
+            self._pairs = pairs
+            return
+
+        r = r_ratio(geom)
+        if r is None:
+            self.summary["warnings"].append(
+                "map: geometry missing port area ratio; skipping mapping"
+            )
+            self._pairs = pairs
+            return
+
+        pairs, skipped = _discover_pairs(ports_dir, "*.csv")
+        for name, reason in skipped:
+            self.summary["warnings"].append(f"map {name}: {reason}")
+        if not pairs:
+            self.summary["warnings"].append("map: no port CSVs available")
+            self._pairs = []
+            return
+
+        for pid, csv in pairs:
+            out_path = mapped_dir / f"{csv.stem}_mapped.csv"
             try:
-                pid = _port_id_from_stem(csv.stem) or csv.stem
-            except Exception:
-                pid = csv.stem
-            pairs.append((pid, csv))
-            if geom is not None:
-                out_path = mapped_dir / f"{csv.stem}_mapped.csv"
+                # Full mapping (qp + deltpVent) if Geometry has a throat
+                process_legacy_parsed_csv(csv, geom, None, out_path)  # qs_col defaults to "VP"
+                self._mapped_csvs.append(out_path)
+                self.artifacts.append(out_path)
+            except Exception as e:
+                # Graceful fallback: produce qp only (no venturi Δp) if beta cannot be derived
                 try:
-                    # Full mapping (qp + deltpVent) if Geometry has a throat
-                    process_legacy_parsed_csv(csv, geom, None, out_path)  # qs_col defaults to "VP"
+                    import pandas as pd
+                    df = pd.read_csv(csv)
+                    if "VP" not in df.columns:
+                        raise RuntimeError("no VP column after normalization")
+                    qs = pd.to_numeric(df["VP"], errors="coerce").to_numpy(float)
+                    qp = map_qs_to_qt(qs, r=r, rho_t_over_rho_s=1.0)
+                    out = df.copy()
+                    out["qp"] = qp
+                    out.to_csv(out_path, index=False)
                     self._mapped_csvs.append(out_path)
                     self.artifacts.append(out_path)
-                except Exception as e:
-                    # Graceful fallback: produce qp only (no venturi Δp) if beta cannot be derived
-                    try:
-                        import pandas as pd
-                        df = pd.read_csv(csv)
-                        if "VP" not in df.columns:
-                            raise RuntimeError("no VP column after normalization")
-                        qs = pd.to_numeric(df["VP"], errors="coerce").to_numpy(float)
-                        qp = map_qs_to_qt(qs, r=r_ratio(geom), rho_t_over_rho_s=1.0)
-                        out = df.copy()
-                        out["qp"] = qp
-                        out.to_csv(out_path, index=False)
-                        self._mapped_csvs.append(out_path)
-                        self.artifacts.append(out_path)
-                        self.summary["warnings"].append(
-                            f"map {csv.name}: throat missing; wrote qp only (no deltpVent)."
-                        )
-                    except Exception:
-                        self.summary["warnings"].append(f"map {csv.name}: {e}")
+                    self.summary["warnings"].append(
+                        f"map {csv.name}: throat missing; wrote qp only (no deltpVent)."
+                    )
+                except Exception:
+                    self.summary["warnings"].append(f"map {csv.name}: {e}")
 
         try:
             png = render_velocity_heatmap(mapped_dir, pairs, self.run.baro_override_Pa)
@@ -251,6 +268,7 @@ class Orchestrator:
             self.summary["warnings"].append(f"heatmap: {e}")
 
         self._pairs = pairs
+
 
     def fit(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Fit calibration models."""

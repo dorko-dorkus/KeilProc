@@ -77,7 +77,7 @@ def test_map_ignores_unknown_geometry_keys(tmp_path):
     ports_dir = base_dir / "ports_csv"
     ports_dir.mkdir(parents=True)
 
-    df = pd.DataFrame({"VP": [1.0, 2.0]})
+    df = pd.DataFrame({"VP": [1.0, 2.0], "Temperature": [20.0, 21.0]})
     csv = ports_dir / "p1.csv"
     df.to_csv(csv, index=False)
 
