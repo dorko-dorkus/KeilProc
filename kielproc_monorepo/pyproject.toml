@@ -4,7 +4,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "kielproc-suite"
+name = "kielproc"
 version = "0.1.0"
 description = "Kiel + wall-static baseline and legacy piccolo translation, with Tk GUI"
 authors = [{name="Brandon Martin"}]
@@ -14,6 +14,11 @@ dependencies = [
     "pandas>=2.0",
     "matplotlib>=3.8",
     "openpyxl>=3.1",
+    "xlrd>=2.0",
+]
+
+[project.optional-dependencies]
+gui = [
     "tk>=0.1",
     "keilproc-oneclick>=0.1.0",
 ]
@@ -23,7 +28,7 @@ kielproc = "kielproc.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["kielproc", "kielproc.*"]
+include = ["kielproc"]
 exclude = []
 
 [tool.pytest.ini_options]
