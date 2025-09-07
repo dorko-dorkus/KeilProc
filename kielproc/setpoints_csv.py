@@ -5,6 +5,7 @@ using :mod:`.io` and the span fitter.
 """
 
 from typing import Any
+from pathlib import Path
 import numpy as np
 import pandas as pd
 
@@ -40,12 +41,12 @@ def setpoints_from_logger_csv(
         Passed through to ``find_optimal_transmitter_span`` (e.g., setpoint_ticks).
     """
 
-    df = load_logger_csv(path)
+    df = load_logger_csv(Path(path), x_col, y_col)
     if use_unify_schema:
-        df = unify_schema(df)
+        df = unify_schema(df, None)
 
-    x = pd.to_numeric(df[x_col], errors="coerce").to_numpy(float)
-    y = pd.to_numeric(df[y_col], errors="coerce").to_numpy(float)
+    x = pd.to_numeric(df["SP"], errors="coerce").to_numpy(float)
+    y = pd.to_numeric(df["VP"], errors="coerce").to_numpy(float)
     mask = np.isfinite(x) & np.isfinite(y)
     x, y = x[mask], y[mask]
 
