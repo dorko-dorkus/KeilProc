@@ -1,4 +1,3 @@
-
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
@@ -7,18 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "kielproc"
 version = "0.1.0"
 description = "Kiel + wall-static baseline and legacy piccolo translation, with Tk GUI"
-authors = [{name="Brandon Martin"}]
-license = "MIT"
+authors = [{name = "Brandon Martin"}]
+license = {text = "MIT"}
 dependencies = [
-    "numpy>=1.24",
-    "pandas>=2.0",
-    "matplotlib>=3.8",
-    "openpyxl>=3.1",
-    "tzdata",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "matplotlib>=3.8",
+  "openpyxl>=3.1",
+  "tzdata"
 ]
 
 [project.optional-dependencies]
-gui = []
+gui = ["pillow>=10", "sv-ttk>=2.6 ; platform_system=='Windows'"]
 
 [project.scripts]
 kielproc = "kielproc.cli:main"
