@@ -22,8 +22,5 @@ gui = []
 [project.scripts]
 kielproc = "kielproc.cli:main"
 
-[tool.setuptools]
-package-dir = {"" = ".."}
-
 [tool.setuptools.packages.find]
-include = ["kielproc", "kielproc.tools.legacy_parser"]
+include = ["kielproc"]
