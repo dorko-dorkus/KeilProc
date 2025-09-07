@@ -21,22 +21,32 @@ def load_legacy_excel(path: Path, sheet=None) -> dict[str, pd.DataFrame]:
             continue
     return frames
 
-def load_logger_csv(path: Path, sp_col: str, vp_col: str, time_col: str | None = None) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    cols = {sp_col: "SP", vp_col: "VP"}
-    if time_col and time_col in df.columns:
-        cols[time_col] = "Time"
-    out = df.rename(columns=cols)[list(cols.values())].copy()
-    return out
+def load_logger_csv(path: str | Path) -> pd.DataFrame:
+    """Read a datalogger CSV file.
 
-def unify_schema(df: pd.DataFrame, sampling_hz: float | None) -> pd.DataFrame:
+    Parameters
+    ----------
+    path : str or Path
+        CSV file path.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Parsed CSV contents.
+    """
+    return pd.read_csv(path)
+
+def unify_schema(df: pd.DataFrame, sampling_hz: float | None = None) -> pd.DataFrame:
+    """Add convenience columns such as ``Sample`` and ``Time_s``.
+
+    This helper is intentionally lightweight and does not enforce the
+    presence of any particular data columns.
+    """
     out = df.copy()
-    if "SP" not in out or "VP" not in out:
-        raise ValueError("Expect SP and VP columns after mapping.")
     n = len(out)
     if "Time" in out:
         t = pd.to_datetime(out["Time"], errors="coerce")
-        if t.notna().sum() >= n//2:
+        if t.notna().sum() >= n // 2:
             t0 = t.dropna().iloc[0]
             out["Time_s"] = (t - t0).dt.total_seconds()
         else:
