@@ -602,6 +602,13 @@ class Orchestrator:
             "qa_gates": qa_gates,
             "inputs": inputs,
         }
+        manifest.setdefault("key_values", {}).update({
+            "qa_gates": qa_gates,
+            "site": getattr(self.run.site, "name", "DefaultSite"),
+            "baro_override_Pa": self.run.baro_override_Pa,
+            "venturi_r": venturi.get("r"),
+            "venturi_beta": venturi.get("beta"),
+        })
         skipped = getattr(self, "_skipped", [])
         if skipped:
             manifest["skipped_files"] = [
