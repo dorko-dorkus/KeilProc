@@ -34,7 +34,7 @@ def parse_legacy_workbook_array(
     xlsx_path: Path, piccolo_flat_threshold: float = 1e-6
 ):
     """Parse a legacy workbook into an in-memory cube."""
-    from tools.legacy_parser.legacy_parser.parser import parse_legacy_workbook
+    from .tools.legacy_parser.parser import parse_legacy_workbook
 
     cube, summary = parse_legacy_workbook(
         xlsx_path, piccolo_flat_threshold=piccolo_flat_threshold, return_mode="array"

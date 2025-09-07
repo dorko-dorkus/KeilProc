@@ -8,7 +8,7 @@ PKG_ROOT = HERE.parent
 if str(PKG_ROOT) not in sys.path:
     sys.path.insert(0, str(PKG_ROOT))
 
-from legacy_parser.parser import parse_legacy_workbook
+from kielproc.tools.legacy_parser.parser import parse_legacy_workbook
 
 def main():
     root = tk.Tk()

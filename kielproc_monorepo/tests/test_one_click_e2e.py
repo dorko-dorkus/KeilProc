@@ -7,11 +7,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
-sys.path.append(str(ROOT / "kielproc_monorepo"))
 
 from kielproc import cli
 from kielproc.run_easy import SitePreset
-import tools.legacy_parser.legacy_parser.parser as parser_mod
+import kielproc.tools.legacy_parser.parser as parser_mod
 
 
 def test_one_click_e2e(tmp_path, monkeypatch, capsys):
