@@ -47,43 +47,21 @@ def render_velocity_heatmap(
     for j, (pid, pf) in enumerate(pairs):
         raw = pd.read_csv(pf)
         norm, _ = _normalize_df(raw, baro_cli_pa)
-        # per-sample physics
         T_K = pd.to_numeric(norm["Temperature"], errors="coerce").to_numpy(float) + 273.15
         if np.any(T_K <= 0.0):
             raise ValueError("Unphysical temperature (T_K <= 0) in visuals")
         p_s = pd.to_numeric(norm["Static_abs_Pa"], errors="coerce").to_numpy(float)
         vp  = pd.to_numeric(norm["VP"], errors="coerce").to_numpy(float).clip(min=0.0)
         rho = p_s / (R * T_K)
-        v   = np.sqrt(2.0 * vp / rho, where=rho>0, out=np.full_like(rho, np.nan))
-
-        # height normalization
-        hcol = _pick(norm, _H_ALIASES)
-        if hcol:
-            h = pd.to_numeric(norm[hcol], errors="coerce").to_numpy(float)
-            # monotonize within replicate if a replicate column exists
-            if "Replicate" in norm.columns:
-                order = np.argsort(norm["Replicate"].to_numpy(), kind="stable")
-                h = h[order]; v = v[order]
-            # normalize to [0,1]
-            hmin = np.nanmin(h); hmax = np.nanmax(h)
-            if not np.isfinite(hmin) or not np.isfinite(hmax) or hmax == hmin:
-                z = np.linspace(0.0, 1.0, len(v), endpoint=False)
-            else:
-                z = (h - hmin) / (hmax - hmin)
-        else:
-            # fallback: sample index normalized
-            n = max(1, len(v))
-            z = np.linspace(0.0, 1.0, n, endpoint=False)
-
-        # bin by z into height_bins and take mean velocity per bin
-        # bin edges [0,1], last bin is [edges[-2], 1)
-        edges = np.linspace(0.0, 1.0, height_bins + 1)
-        binned = []
-        for k in range(height_bins):
-            m = (z >= edges[k]) & (z < edges[k+1])
-            vv = v[m]
-            binned.append(float(np.nanmean(vv)) if vv.size else np.nan)
-        grid[:, j] = np.array(binned, dtype=float)
+        v   = np.sqrt(np.maximum(vp / rho, 0.0))
+        # simple height binning
+        h_col = next((c for c in raw.columns if c in _H_ALIASES), None)
+        h = pd.to_numeric(raw[h_col], errors="coerce").to_numpy(float) if h_col else np.linspace(0, 1, len(v))
+        bins = np.linspace(np.nanmin(h), np.nanmax(h), height_bins + 1)
+        idx = np.digitize(h, bins) - 1
+        for b in range(height_bins):
+            sel = v[idx == b]
+            grid[b, j] = float(np.nanmean(sel)) if np.any(np.isfinite(sel)) else np.nan
 
     # percentile clip to reduce outlier influence
     finite_vals = grid[np.isfinite(grid)]
@@ -109,6 +87,6 @@ def render_velocity_heatmap(
     ax.set_title("Velocity heatmap")
     fig.tight_layout()
     out = outdir / "heatmap_velocity.png"
-    fig.savefig(out, dpi=150)
+    fig.savefig(out, dpi=150, format="png")
     plt.close(fig)
     return out
