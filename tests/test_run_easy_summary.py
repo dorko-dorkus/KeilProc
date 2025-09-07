@@ -40,6 +40,9 @@ def test_summary_contains_required_keys(tmp_path):
         "venturi_beta": None,
         "transmitter_span": None,
         "transmitter_setpoints": None,
+        "qa_gates": {"delta_opp_max": 0.01, "w_max": 0.002},
+        "site": "Dummy",
+        "baro_override_Pa": None,
     }
     assert manifest["key_values"] == expected_keys
     assert manifest["qa_gates"] == {"delta_opp_max": 0.01, "w_max": 0.002}
