@@ -28,6 +28,7 @@ def build_parser():
     oc.add_argument("--stamp", type=str, default=None, help="Override run stamp YYYYMMDD_HHMM (NZT)")
     oc.add_argument("--out", type=Path, default=None, help="Output base directory (RUN_* will be created here)")
     oc.add_argument("--bundle", action="store_true", help="Zip run directory into RUN_*__bundle.zip")
+    oc.add_argument("--strict", action="store_true", help="Fail fast on missing/invalid stages")
 
     i0 = sub.add_parser("results", help="Report legacy-style results from a logger CSV")
     i0.add_argument("--csv", required=True, help="Input logger CSV path")
@@ -119,6 +120,7 @@ def main(argv=None):
             baro_override_Pa=a.baro,
             run_stamp=a.stamp,
             output_base=a.out,
+            strict=a.strict,
         )
         bundle_zip = None
         if a.bundle:
