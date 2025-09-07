@@ -4,6 +4,8 @@ Comprehensive processing suite for differential pressure data from coal mill duc
 
 ## Installation
 
+From the repository root:
+
 ```bash
 python -m pip install .
 ```
@@ -20,13 +22,15 @@ Running `kielproc one-click` executes the full SOP:
 Parse → Integrate → Map → Fit → Translate → Report
 ```
 
-Artifacts are written to a `RUN_<STAMP>/` directory:
+Artifacts are written to a `RUN_<STAMP>/` directory, which is also bundled as
+`RUN_<STAMP>__bundle.zip`:
 
 ```
 RUN_<STAMP>/
   run_context.json
-  _integrated/...
-  _fit/...
+  _integrated/{per_port.csv, duct_result.json, normalize_meta.json,
+    heatmap_velocity.png}
+  _fit/{alpha_beta_by_block.*, alpha_beta_pooled.*, align_*.png}
   _translate/translated.csv
   _report/{legacy_results.csv,json,setpoints.json}
   summary.json
