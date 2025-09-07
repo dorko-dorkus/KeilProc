@@ -8,21 +8,21 @@ import json
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple, Union
-from kielproc.physics import map_qs_to_qt, venturi_dp_from_qt
-from kielproc.translate import compute_translation_table, apply_translation
-from kielproc.lag import shift_series, first_order_lag
-from kielproc.report import write_summary_tables, plot_alignment
-from kielproc.qa import qa_indices, DEFAULT_DELTA_OPP_MAX, DEFAULT_W_MAX
-from kielproc.geometry import (
+from .physics import map_qs_to_qt, venturi_dp_from_qt
+from .translate import compute_translation_table, apply_translation
+from .lag import shift_series, first_order_lag
+from .report import write_summary_tables, plot_alignment
+from .qa import qa_indices, DEFAULT_DELTA_OPP_MAX, DEFAULT_W_MAX
+from .geometry import (
     Geometry,
     duct_area,
     throat_area,
     r_ratio,
     beta_from_geometry,
 )
-from kielproc.io import unify_schema
-from kielproc.setpoints import find_optimal_transmitter_span
-from kielproc.legacy_results import ResultsConfig, compute_results as compute_legacy_results
+from .io import unify_schema
+from .setpoints import find_optimal_transmitter_span
+from .legacy_results import ResultsConfig, compute_results as compute_legacy_results
 
 
 def _df_from(csv_or_df: Union[Path, pd.DataFrame]) -> pd.DataFrame:
@@ -367,8 +367,8 @@ def legacy_results_from_csv(csv_or_df: Union[Path, pd.DataFrame], cfg: ResultsCo
     return res
 
 
-from kielproc.geometry import DiffuserGeometry, infer_geometry_from_table, planes_to_z, plane_value_to_z
-from kielproc.report import plot_flow_map_unwrapped, compute_circumferential_static_deviation
+from .geometry import DiffuserGeometry, infer_geometry_from_table, planes_to_z, plane_value_to_z
+from .report import plot_flow_map_unwrapped, compute_circumferential_static_deviation
 
 def generate_flow_map_from_csv(data_csv_or_df: Union[Path, pd.DataFrame], theta_col: str,
                                plane_col: str, ps_col: str, outdir: Path,
@@ -414,8 +414,8 @@ def map_from_tot_and_static(csv_or_df: Union[Path, pd.DataFrame], total_col: str
     return map_verification_plane(df, "qs_verif", geom, sampling_hz, out_path)
 
 
-from kielproc.report import plot_polar_slice_wall
-from kielproc.geometry import DiffuserGeometry
+from .report import plot_polar_slice_wall
+from .geometry import DiffuserGeometry
 
 def generate_polar_slice_from_csv(data_csv_or_df: Union[Path, pd.DataFrame], theta_col: str,
                                   plane_col: str, ps_col: str, plane_value: float,
@@ -478,7 +478,7 @@ def compute_setpoints(
 ) -> Dict[str, object]:
     """Compute transmitter setpoints from logger data.
 
-    Parameters mirror :func:`kielproc.setpoints.find_optimal_transmitter_span`.
+    Parameters mirror :func:`.setpoints.find_optimal_transmitter_span`.
     If *out_json* or *out_csv* is provided, the setpoint mapping is written to
     disk in JSON or CSV form respectively.  Returns a small dictionary with
     the resulting mapping and output file paths.

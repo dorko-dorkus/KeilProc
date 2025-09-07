@@ -10,7 +10,7 @@ Compression=lzma
 SolidCompression=yes
 
 [Files]
-Source: "..\..\kielproc_monorepo\dist\KielProc\KielProc.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\app\dist\KielProc\KielProc.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\KielProc"; Filename: "{app}\KielProc.exe"

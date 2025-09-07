@@ -1,7 +1,7 @@
 from __future__ import annotations
 """
 CSV adapter for computing transmitter setpoints from a datalogger export,
-using kielproc.io.load_logger_csv and the span fitter.
+using :mod:`.io` and the span fitter.
 """
 
 from typing import Any
@@ -22,7 +22,7 @@ def setpoints_from_logger_csv(
     use_unify_schema: bool = False,
     **fit_kwargs: Any,
 ) -> OptimalSpan:
-    """Load CSV via existing kielproc loader and compute optimal span.
+    """Load CSV via existing loader and compute optimal span.
 
     Parameters
     ----------

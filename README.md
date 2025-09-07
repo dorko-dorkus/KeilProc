@@ -4,15 +4,14 @@ Comprehensive processing suite for differential pressure data from coal mill duc
 
 ## Repository structure
 
-- `kielproc_monorepo/` – combined library and legacy tools.
-  - `kielproc/` – backend for physics mapping, lag removal, Deming regression, pooling and reporting.
-  - `tests/` – basic sanity tests built with `pytest`.
-  - `Design_and_Validation_Report.pdf`, `Holistic_Legacy_Integration_and_Verification_Plan.pdf` – project documentation.
+- `kielproc/` – backend for physics mapping, lag removal, Deming regression, pooling and reporting.
+- `tests/` – basic sanity tests built with `pytest`.
+- `Design_and_Validation_Report.pdf`, `Holistic_Legacy_Integration_and_Verification_Plan.pdf` – project documentation.
 
 ## Quick start
 
 ```bash
-python -m pip install -r kielproc_monorepo/requirements.txt -c kielproc_monorepo/constraints.txt
+python -m pip install -r requirements.txt -c constraints.txt
 python app/gui/main_window.py  # launch the Run Easy GUI
 ```
 
