@@ -100,7 +100,7 @@ class Orchestrator:
 
     def parse(self, ports_dir: Path) -> None:  # pragma: no cover - placeholder
         """Parse legacy workbooks to per-port CSVs."""
-        from tools.legacy_parser.legacy_parser.parser import parse_legacy_workbook
+        from .tools.legacy_parser.parser import parse_legacy_workbook
 
         src = self.run.src
         ports_dir.mkdir(parents=True, exist_ok=True)

@@ -26,4 +26,4 @@ kielproc = "kielproc.cli:main"
 package-dir = {"" = ".."}
 
 [tool.setuptools.packages.find]
-include = ["kielproc"]
+include = ["kielproc", "kielproc.tools.legacy_parser"]

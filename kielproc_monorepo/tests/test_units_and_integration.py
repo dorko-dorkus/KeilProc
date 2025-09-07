@@ -5,8 +5,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
-sys.path.append(str(ROOT / "kielproc_monorepo" / "tools" / "legacy_parser"))
-from legacy_parser.parser import _sanitize_headers_and_units
+from kielproc.tools.legacy_parser.parser import _sanitize_headers_and_units
 from kielproc.aggregate import _normalize_df, RunConfig, integrate_run
 
 
