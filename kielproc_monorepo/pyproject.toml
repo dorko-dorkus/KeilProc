@@ -14,22 +14,16 @@ dependencies = [
     "pandas>=2.0",
     "matplotlib>=3.8",
     "openpyxl>=3.1",
-    "xlrd>=2.0",
 ]
 
 [project.optional-dependencies]
-gui = [
-    "tk>=0.1",
-    "keilproc-oneclick>=0.1.0",
-]
+gui = []
 
 [project.scripts]
 kielproc = "kielproc.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["kielproc"]
-exclude = []
+[tool.setuptools]
+package-dir = {"" = ".."}
 
-[tool.pytest.ini_options]
-pythonpath = ["."]
+[tool.setuptools.packages.find]
+include = ["kielproc"]

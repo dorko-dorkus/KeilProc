@@ -17,6 +17,12 @@ import json
 import time
 
 from .aggregate import integrate_run, RunConfig, discover_pairs
+from .gui_adapter import (
+    process_legacy_parsed_csv,
+    fit_alpha_beta,
+    translate_piccolo,
+    legacy_results_from_csv,
+)
 
 NZT = "Pacific/Auckland"
 
@@ -200,7 +206,6 @@ class Orchestrator:
     
     def map(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Build velocity maps from integrated data."""
-        from .gui_adapter import process_legacy_parsed_csv
         from .physics import map_qs_to_qt
         from .visuals import render_velocity_heatmap
         from .geometry import Geometry, r_ratio
@@ -296,7 +301,6 @@ class Orchestrator:
 
     def fit(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Fit calibration models."""
-        from .gui_adapter import fit_alpha_beta
 
         mapped = getattr(self, "_mapped_csvs", [])
         if not mapped:
@@ -336,7 +340,6 @@ class Orchestrator:
 
     def translate(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Generate control-system lookup tables."""
-        from .gui_adapter import translate_piccolo
 
         if not getattr(self, "_alpha_beta", None) or not getattr(self, "_mapped_csvs", None):
             msg = "translate: missing fit results or mapped data"
@@ -366,7 +369,6 @@ class Orchestrator:
 
     def report(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Emit consolidated HTML/PDF reports."""
-        from .gui_adapter import legacy_results_from_csv
         from .legacy_results import ResultsConfig
         import math
 
