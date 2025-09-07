@@ -27,7 +27,10 @@ def build_parser():
     p = argparse.ArgumentParser(prog="kielproc", description="Kiel + wall-static baseline & legacy translation")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    oc = sub.add_parser("one-click", help="Process legacy worksheets to full SOP outputs")
+    oc = sub.add_parser(
+        "one-click",
+        help="Parse → Integrate → Map → Fit → Translate → Report legacy worksheets",
+    )
     oc.add_argument("src", type=Path, help="Workbook file or directory of workbooks")
     oc.add_argument("--site", default="DefaultSite", choices=PRESETS.keys())
     oc.add_argument("--baro", type=float, default=None, help="Override barometric pressure in Pa")
@@ -35,13 +38,16 @@ def build_parser():
     oc.add_argument("--out", type=Path, default=None, help="Output base directory (RUN_* will be created here)")
     oc.add_argument("--bundle", action="store_true", help="Zip run directory into RUN_*__bundle.zip")
 
-    i0 = sub.add_parser("results", help="Compute legacy-style results from a logger CSV")
+    i0 = sub.add_parser("results", help="Report legacy-style results from a logger CSV")
     i0.add_argument("--csv", required=True, help="Input logger CSV path")
     i0.add_argument("--config", help="JSON file with ResultsConfig fields")
     i0.add_argument("--json-out", help="Optional path to write results as JSON")
     i0.add_argument("--csv-out", help="Optional path to write results as CSV")
 
-    i1 = sub.add_parser("map", help="Map verification-plane Kiel/static to throat Δp_vent for comparison")
+    i1 = sub.add_parser(
+        "map",
+        help="Map verification-plane static to throat Δp_vent for comparison",
+    )
     i1.add_argument("--csv", required=True)
     i1.add_argument("--qs-col", required=True, help="Verification-plane dynamic qs column (Pa)")
     i1.add_argument("--r", required=True, type=float, help="Area ratio r = As/At")
@@ -49,7 +55,7 @@ def build_parser():
     i1.add_argument("--sampling-hz", required=False, type=float, help="DCS/logger sampling rate (Hz)")
     i1.add_argument("--out", required=True)
 
-    i2 = sub.add_parser("fit", help="Fit alpha/beta translation from blocks of CSVs")
+    i2 = sub.add_parser("fit", help="Fit α/β translation from CSV blocks")
     i2.add_argument("--blocks", nargs="+", required=True, help="Pairs: name=path.csv")
     i2.add_argument("--ref-col", default="mapped_ref")
     i2.add_argument("--piccolo-col", default="piccolo")
@@ -76,7 +82,10 @@ def build_parser():
                     help="Max allowed W index; gate if exceeded")
     i2.add_argument("--outdir", required=True)
 
-    i3 = sub.add_parser("translate", help="Apply alpha/beta to legacy piccolo to overlay on mapped reference")
+    i3 = sub.add_parser(
+        "translate",
+        help="Translate legacy piccolo using α/β to overlay on mapped reference",
+    )
     i3.add_argument("--csv", required=True)
     i3.add_argument("--alpha", type=float, required=True)
     i3.add_argument("--beta", type=float, required=True)
@@ -84,7 +93,10 @@ def build_parser():
     i3.add_argument("--out-col", default="piccolo_translated")
     i3.add_argument("--out", required=True)
 
-    p4 = sub.add_parser("integrate-ports", help="Integrate PORT*.csv in a folder into duct results")
+    p4 = sub.add_parser(
+        "integrate-ports",
+        help="Integrate port CSVs into duct results",
+    )
     p4.add_argument(
         "--run-dir",
         required=True,

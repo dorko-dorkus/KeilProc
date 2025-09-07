@@ -12,8 +12,26 @@ Comprehensive processing suite for differential pressure data from coal mill duc
 
 ```bash
 python -m pip install -r requirements.txt -c constraints.txt
-python app/gui/main_window.py  # launch the Run Easy GUI
+python -m kielproc.cli one-click path/to/legacy.xlsx --bundle
 ```
+
+Running `kielproc one-click` executes the full SOP:
+
+```
+Parse → Integrate → Map → Fit → Translate → Report
+```
+
+Outputs are written to a `RUN_<stamp>/` directory and include:
+
+- `ports_csv/` with per-port CSVs and `*__parse_summary.json` files
+- `_integrated/` containing `per_port.csv`, `duct_result.json`,
+  `normalize_meta.json` and `reference_block.json`
+- `_fit/` with `alpha_beta_by_block.csv`, `alpha_beta_pooled.json` and an
+  alignment plot
+- `_report/` with `legacy_results.csv`, `legacy_results.json` and optional
+  `setpoints.json`
+- `summary.json` manifest listing tables and plots
+- optional `RUN_<stamp>__bundle.zip` when `--bundle` is supplied
 
 ## Pre-start checks
 
