@@ -435,6 +435,36 @@ class Orchestrator:
         self.map(out)
         self._progress("Fitting…")
         self.fit(out)
+        # Derive transmitter setpoints from pooled α/β and mapped data.
+        try:
+            pooled = next((p for p in self.artifacts if p.name == "alpha_beta_pooled.json"), None)
+            if pooled and pooled.exists() and getattr(self, "_mapped_csvs", None):
+                data = json.loads(pooled.read_text())
+                alpha = data.get("alpha")
+                beta = data.get("beta")
+                if alpha is not None and beta is not None:
+                    import pandas as pd
+                    x_vals: list[float] = []
+                    y_vals: list[float] = []
+                    for csv in self._mapped_csvs:
+                        try:
+                            df = pd.read_csv(csv)
+                            if "Piccolo" in df.columns:
+                                y = pd.to_numeric(df["Piccolo"], errors="coerce").to_numpy(float)
+                                x = alpha + beta * y
+                                x_vals.extend(x.tolist())
+                                y_vals.extend(y.tolist())
+                        except Exception:
+                            continue
+                    if x_vals and y_vals:
+                        from .setpoints import find_optimal_transmitter_span
+                        opt = find_optimal_transmitter_span(x_vals, y_vals, slope_sign=+1)
+                        sp_path = out / "_report" / "setpoints.json"
+                        sp_path.parent.mkdir(parents=True, exist_ok=True)
+                        sp_path.write_text(json.dumps(opt.setpoints, indent=2))
+                        self.artifacts.append(sp_path)
+        except Exception as e:
+            self.summary["warnings"].append(f"setpoints: {e}")
         self._progress("Translating…")
         self.translate(out)
         self._progress("Reporting…")
@@ -492,6 +522,16 @@ class Orchestrator:
         manifest_path = out / 'summary.json'
         manifest_path.write_text(json.dumps(manifest, indent=2))
         self.artifacts.append(manifest_path)
+        try:
+            import shutil
+            bundle_base = out.with_name(f"{out.name}__bundle")
+            shutil.make_archive(str(bundle_base), "zip", root_dir=out)
+            bundle_zip = bundle_base.with_suffix(".zip")
+            self.artifacts.append(bundle_zip)
+            manifest["bundle_zip"] = str(bundle_zip)
+            manifest_path.write_text(json.dumps(manifest, indent=2))
+        except Exception as e:
+            self.summary["warnings"].append(f"bundle: {e}")
 
         # optional strict postcondition: ensure we produced something non-trivial
         if self.strict and not (tables or plots):
