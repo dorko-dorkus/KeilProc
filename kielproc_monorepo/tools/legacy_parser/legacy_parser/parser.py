@@ -20,10 +20,9 @@ def _sanitize_headers_and_units(df: pd.DataFrame) -> pd.DataFrame:
             if re.search(r"(?i)(kelvin|\(k\)|_k\b|\bk\b)", c):
                 out["Temperature"] = pd.to_numeric(out[c], errors="coerce") - 273.15
                 if c != "Temperature":
-                    try:
-                        out.drop(columns=[c], inplace=True)
-                    except Exception:
-                        pass
+                    # ``errors='ignore'`` avoids an exception if the column was
+                    # already removed by earlier normalization steps.
+                    out.drop(columns=[c], inplace=True, errors="ignore")
                 break
     # Static: header-driven units and gauge/absolute only (no magnitude heuristic).
     def _unit_scale(colname: str) -> float:
@@ -54,10 +53,7 @@ def _sanitize_headers_and_units(df: pd.DataFrame) -> pd.DataFrame:
             if re.search(r"(?i)\bbaro|barometric|ambient", c):
                 out["Baro"] = pd.to_numeric(out[c], errors="coerce") * _unit_scale(c)
                 if c != "Baro":
-                    try:
-                        out.drop(columns=[c], inplace=True)
-                    except Exception:
-                        pass
+                    out.drop(columns=[c], inplace=True, errors="ignore")
     return out
 
 

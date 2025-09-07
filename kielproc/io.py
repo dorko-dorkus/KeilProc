@@ -8,13 +8,17 @@ LEGACY_TIME_COLS = ["Time", "Timestamp", "t", "time"]
 
 def load_legacy_excel(path: Path, sheet=None) -> dict[str, pd.DataFrame]:
     xls = pd.ExcelFile(path)
-    frames = {}
+    frames: dict[str, pd.DataFrame] = {}
     for nm in xls.sheet_names if sheet is None else [sheet]:
         try:
-            df = xls.parse(nm)
-            frames[nm] = df
+            frames[nm] = xls.parse(nm)
         except Exception:
-            pass
+            # Legacy workbooks occasionally contain charts or other objects
+            # that ``pandas`` cannot parse into a ``DataFrame``.  These are
+            # not fatal for the calling code, so simply skip over them rather
+            # than swallowing the exception with ``pass`` which obscures the
+            # control flow.
+            continue
     return frames
 
 def load_logger_csv(path: Path, sp_col: str, vp_col: str, time_col: str | None = None) -> pd.DataFrame:
