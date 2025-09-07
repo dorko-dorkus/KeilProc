@@ -4,12 +4,13 @@ RunEasy — Tk GUI wrapper for kielproc.run_easy
 
 Purpose
   • Single-window, operator-proof GUI to run the full SOP pipeline ("Run-Easy") with zero terminal use.
-  • Shows key values (α, β, lag, transmitter span & setpoints) and lists plots/tables from summary.json.
+  • Shows key values (α, β, lag, venturi r & β, transmitter span & setpoints) and lists plots/tables from summary.json.
   • Double-click to open artifacts; preview PNGs inline; open run folder / bundle zip.
   • API‑first (kielproc.run_easy.run_all); silent fallback to CLI `kielproc one-click`.
 
 Nice-to-haves
-  • Remembers last paths/site/baro in a per-user config file.
+  • Remembers last paths/site/baro/folder in a per-user config file.
+  • Drag-and-drop files/folders onto the path entry.
   • Optional modern theme if `sv_ttk` is installed; otherwise ttk default.
   • No non‑stdlib hard deps (Pillow preview is optional if present).
 
@@ -47,6 +48,12 @@ try:  # optional image preview (falls back to tk only)
 except Exception:  # pragma: no cover
     Image = None  # type: ignore
     ImageTk = None  # type: ignore
+
+try:  # optional drag-and-drop support
+    from tkinterdnd2 import DND_FILES, TkinterDnD  # type: ignore
+except Exception:  # pragma: no cover
+    DND_FILES = None  # type: ignore
+    TkinterDnD = None  # type: ignore
 
 APP_NAME = "RunEasy-GUI"
 CONFIG_DIR = Path.home() / ".kielproc_gui"
@@ -268,7 +275,14 @@ class RunEasyApp(ttk.Frame):
 
         r1 = ttk.Frame(frm); r1.pack(fill="x", pady=6)
         ttk.Label(r1, text="Workbook / Folder:").pack(side="left")
-        ttk.Entry(r1, textvariable=self.path_var).pack(side="left", fill="x", expand=True, padx=6)
+        self.path_entry = ttk.Entry(r1, textvariable=self.path_var)
+        self.path_entry.pack(side="left", fill="x", expand=True, padx=6)
+        if DND_FILES:
+            try:
+                self.path_entry.drop_target_register(DND_FILES)
+                self.path_entry.dnd_bind("<<Drop>>", self._on_drop_path)
+            except Exception:
+                pass
         ttk.Button(r1, text="Browse…", command=self._browse).pack(side="left")
 
         r2 = ttk.Frame(frm); r2.pack(fill="x", pady=6)
@@ -303,11 +317,14 @@ class RunEasyApp(ttk.Frame):
         kv = ttk.LabelFrame(mid, text="Key values")
         kv.pack(side="left", fill="y", padx=(0, 8), pady=4)
         self.kv_alpha = tk.StringVar(); self.kv_beta = tk.StringVar()
-        self.kv_lag = tk.StringVar(); self.kv_span = tk.StringVar(); self.kv_setpts = tk.StringVar()
+        self.kv_lag = tk.StringVar(); self.kv_r = tk.StringVar(); self.kv_vbeta = tk.StringVar()
+        self.kv_span = tk.StringVar(); self.kv_setpts = tk.StringVar()
         for lbl, var in (
             ("Pooled α (alpha):", self.kv_alpha),
             ("Pooled β (beta):", self.kv_beta),
             ("Lag (samples):", self.kv_lag),
+            ("r (venturi):", self.kv_r),
+            ("β (venturi):", self.kv_vbeta),
             ("Transmitter span (Pa):", self.kv_span),
             ("Set-points (4–20 mA):", self.kv_setpts),
         ):
@@ -357,12 +374,31 @@ class RunEasyApp(ttk.Frame):
         except Exception:
             return "kielproc (version unknown)"
 
+    def _update_last_path(self, path: str) -> None:
+        self.cfg["last_path"] = str(path)
+        p = Path(path)
+        self.cfg["last_folder"] = str(p.parent if p.is_file() else p)
+
+    def _on_drop_path(self, event) -> None:  # pragma: no cover - GUI interaction
+        path = event.data.strip()
+        if path.startswith("{") and path.endswith("}"):
+            path = path[1:-1]
+        if " " in path and not Path(path).exists():
+            path = path.split()[0]
+        self.path_var.set(path)
+        self._update_last_path(path)
+        save_config(self.cfg)
+        return "break"
+
     def _browse(self) -> None:
-        path = filedialog.askopenfilename(title="Select workbook")
+        initdir = self.cfg.get("last_folder")
+        path = filedialog.askopenfilename(title="Select workbook", initialdir=initdir)
         if not path:
-            path = filedialog.askdirectory(title="Or select a folder")
+            path = filedialog.askdirectory(title="Or select a folder", initialdir=initdir)
         if path:
             self.path_var.set(path)
+            self._update_last_path(path)
+            save_config(self.cfg)
 
     def _start(self) -> None:
         p = Path(self.path_var.get().strip())
@@ -376,17 +412,25 @@ class RunEasyApp(ttk.Frame):
             return
 
         # persist last values
-        save_config({
-            "last_path": str(p),
-            "last_site": site or "",
-            "last_baro": baro or "",
-        })
+        self._update_last_path(str(p))
+        self.cfg["last_site"] = site or ""
+        self.cfg["last_baro"] = baro or ""
+        save_config(self.cfg)
 
         # reset UI
         self.btn_run.configure(state="disabled")
         self.btn_open.configure(state="disabled")
         self.btn_zip.configure(state="disabled")
-        self._set_keys(alpha=None, beta=None, lag=None, span=None, setpts=None)
+        self._set_keys(
+            alpha=None,
+            beta=None,
+            lag_samples=None,
+            lag_seconds=None,
+            r=None,
+            beta_v=None,
+            span=None,
+            setpts=None,
+        )
         self._fill_tree([])
         self.preview.show(None)
         self._log("Starting…")
@@ -478,9 +522,17 @@ class RunEasyApp(ttk.Frame):
         alpha = kv.get("alpha")
         beta = kv.get("beta")
         lag = kv.get("lag_samples")
+        r = kv.get("venturi_r")
+        beta_v = kv.get("venturi_beta")
         span = kv.get("transmitter_span")
         setpts = kv.get("transmitter_setpoints")
-        self._set_keys(alpha, beta, lag, span, setpts)
+        inputs = smry.get("inputs", {}) or {}
+        sampling_hz = inputs.get("sampling_hz") or inputs.get("sampling_rate_hz") or inputs.get("sampling_rate")
+        try:
+            lag_s = float(lag) / float(sampling_hz) if lag is not None and sampling_hz else None
+        except Exception:
+            lag_s = None
+        self._set_keys(alpha, beta, lag, lag_s, r, beta_v, span, setpts)
 
         rows: list[tuple[str, str]] = []
         for t in smry.get("plots", []) or []:
@@ -491,12 +543,20 @@ class RunEasyApp(ttk.Frame):
             rows.append(("table", str(p)))
         self._fill_tree(rows)
 
-    def _set_keys(self, alpha, beta, lag, span, setpts) -> None:
+    def _set_keys(self, alpha, beta, lag_samples, lag_seconds, r, beta_v, span, setpts) -> None:
         def fmt(v, default="—"):
             return default if v in (None, "", [], {}) else str(v)
         self.kv_alpha.set(fmt(alpha))
         self.kv_beta.set(fmt(beta))
-        self.kv_lag.set(fmt(lag))
+        if lag_samples in (None, "", [], {}):
+            self.kv_lag.set("—")
+        else:
+            lag_txt = str(lag_samples)
+            if lag_seconds not in (None, "", [], {}):
+                lag_txt += f" ({float(lag_seconds):.2f} s)"
+            self.kv_lag.set(lag_txt)
+        self.kv_r.set(fmt(r))
+        self.kv_vbeta.set(fmt(beta_v))
         if isinstance(span, (list, tuple)) and len(span) == 2:
             self.kv_span.set(f"{span[0]} .. {span[1]} Pa")
         else:
@@ -530,7 +590,7 @@ class RunEasyApp(ttk.Frame):
 
 
 def main() -> None:
-    root = tk.Tk()
+    root = TkinterDnD.Tk() if TkinterDnD else tk.Tk()
     try:
         root.iconbitmap(default="")  # no external icon dependency
     except Exception:
