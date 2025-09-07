@@ -10,6 +10,9 @@ From the repository root:
 python -m pip install .
 ```
 
+If you need to parse legacy `.xls` workbooks, also install `xlrd<2.0`. Modern
+`.xlsx` files are supported out of the box.
+
 ## Usage
 
 ### CLI
