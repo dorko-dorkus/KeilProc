@@ -341,14 +341,14 @@ class RunEasyPanel(ttk.Frame):
             try:
                 d = float(pgeom["duct_diameter_m"])
                 pgeom["duct_area_m2"] = math.pi * (d**2) / 4.0
-            except Exception:
-                pass
+            except Exception as e:
+                self._append_log(f"⚠️ Invalid duct diameter: {e}")
         if ("throat_area_m2" not in pgeom) and (pgeom.get("throat_diameter_m")):
             try:
                 dt = float(pgeom["throat_diameter_m"])
                 pgeom["throat_area_m2"] = math.pi * (dt**2) / 4.0
-            except Exception:
-                pass
+            except Exception as e:
+                self._append_log(f"⚠️ Invalid throat diameter: {e}")
 
         if geom_override or defaults_override:
             pgeom.update(geom_override)
@@ -380,8 +380,8 @@ class RunEasyPanel(ttk.Frame):
             r = float(As) / float(At_ports)
             beta = float(beta_override) if beta_override is not None else (float(At) / float(A1)) ** 0.5
             self._append_log(f"Derived: r={r:.4g}, β={beta:.4g}")
-        except Exception:
-            pass
+        except Exception as e:
+            self._append_log(f"⚠️ Unable to derive r/β: {e}")
 
         self._queue = queue.Queue()
         self._runner = _Runner(src, preset, baro, stamp, out_dir, self._queue)
