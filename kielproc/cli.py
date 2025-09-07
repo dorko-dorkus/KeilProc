@@ -11,17 +11,8 @@ from .translate import compute_translation_table, apply_translation
 from .lag import shift_series
 from .report import write_summary_tables, plot_alignment
 from .legacy_results import ResultsConfig, compute_results as compute_legacy_results
-from .run_easy import run_easy_legacy, SitePreset
-
-PRESETS = {
-    # In a real deployment these would be loaded from an external presets file.
-    "DefaultSite": SitePreset(
-        name="DefaultSite",
-        geometry={"duct_diameter_m": 2.5, "ports": 8, "weighting": "equal"},
-        instruments={"vp_unit": "Pa", "temp_unit": "C"},
-        defaults={"fallback_baro_Pa": 101325},
-    )
-}
+from .run_easy import run_easy_legacy
+from .presets import PRESETS
 
 def build_parser():
     p = argparse.ArgumentParser(prog="kielproc", description="Kiel + wall-static baseline & legacy translation")
