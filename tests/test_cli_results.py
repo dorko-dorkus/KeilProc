@@ -1,11 +1,11 @@
 import json
-import subprocess
-import sys
 from pathlib import Path
+
 import pandas as pd
+from kielproc import cli
 
 
-def test_cli_results(tmp_path: Path):
+def test_cli_results(tmp_path: Path, capsys):
     df = pd.DataFrame({
         "Temperature": [20.0, 21.0, 19.5],
         "VP": [10.0, 11.0, 9.0],
@@ -23,10 +23,7 @@ def test_cli_results(tmp_path: Path):
     cfg_path.write_text(json.dumps(cfg))
     json_out = tmp_path / "out.json"
     csv_out = tmp_path / "out.csv"
-    cmd = [
-        sys.executable,
-        "-m",
-        "kielproc.cli",
+    args = [
         "results",
         "--csv",
         str(csv),
@@ -37,8 +34,8 @@ def test_cli_results(tmp_path: Path):
         "--csv-out",
         str(csv_out),
     ]
-    cp = subprocess.run(cmd, capture_output=True, check=True, text=True)
-    data = json.loads(cp.stdout)
+    cli.main(args)
+    data = json.loads(capsys.readouterr().out)
     assert json_out.exists()
     assert csv_out.exists()
     assert data["n_samples"] == 3

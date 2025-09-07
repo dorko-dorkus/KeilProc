@@ -15,6 +15,10 @@ python -m pip install -r requirements.txt -c constraints.txt
 python -m kielproc.cli one-click path/to/legacy.xlsx --bundle
 ```
 
+The console script `kielproc` is backed by `kielproc.cli:main`.  Each
+subcommand (for example `one-click` or `results`) prints a JSON object to
+stdout, making it easy to integrate into scripts and other tooling.
+
 Running `kielproc one-click` executes the full SOP:
 
 ```
