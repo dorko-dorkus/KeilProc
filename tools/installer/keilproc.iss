@@ -10,11 +10,11 @@ Compression=lzma
 SolidCompression=yes
 
 [Files]
-Source: "..\..\dist\kielproc-gui\kielproc-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\dist\RunEasy-GUI.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\KielProc GUI"; Filename: "{app}\kielproc-gui.exe"
-Name: "{commondesktop}\KielProc GUI"; Filename: "{app}\kielproc-gui.exe"; Tasks: desktopicon
+Name: "{group}\RunEasy"; Filename: "{app}\RunEasy-GUI.exe"
+Name: "{commondesktop}\RunEasy"; Filename: "{app}\RunEasy-GUI.exe"; Tasks: desktopicon
 
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
