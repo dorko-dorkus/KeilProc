@@ -507,6 +507,17 @@ class Orchestrator:
                             key_vals['transmitter_setpoints'] = mapping
             except Exception:
                 pass
+        required_keys = [
+            "alpha",
+            "beta",
+            "lag_samples",
+            "venturi_r",
+            "venturi_beta",
+            "transmitter_span",
+            "transmitter_setpoints",
+        ]
+        key_vals = {k: key_vals.get(k) for k in required_keys}
+
         manifest = {'tables': tables, 'plots': plots, 'key_values': key_vals}
         manifest_path = out / 'summary.json'
         manifest_path.write_text(json.dumps(manifest, indent=2))
