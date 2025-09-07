@@ -13,6 +13,7 @@ exercised in isolation.
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Callable
+import dataclasses
 import json
 import time
 
@@ -400,6 +401,16 @@ class Orchestrator:
             json_out = outdir / "legacy_results.json"
             json_out.write_text(json.dumps(res, indent=2))
             self.artifacts.append(json_out)
+            try:
+                from .setpoints_csv import setpoints_from_logger_csv
+                sp = setpoints_from_logger_csv(str(csv), x_col="Piccolo_translated", y_col="Piccolo")
+                sp_path = outdir / "setpoints.json"
+                sp_path.write_text(json.dumps(dataclasses.asdict(sp), indent=2))
+                self.artifacts.append(sp_path)
+            except Exception as e2:
+                if self.strict:
+                    raise OneClickError(f"setpoints: {e2}")
+                self.summary["warnings"].append(f"setpoints: {e2}")
         except Exception as e:
             if self.strict:
                 raise OneClickError(f"report: {e}")
@@ -437,36 +448,6 @@ class Orchestrator:
         self.map(out)
         self._progress("Fitting…")
         self.fit(out)
-        # Derive transmitter setpoints from pooled α/β and mapped data.
-        try:
-            pooled = next((p for p in self.artifacts if p.name == "alpha_beta_pooled.json"), None)
-            if pooled and pooled.exists() and getattr(self, "_mapped_csvs", None):
-                data = json.loads(pooled.read_text())
-                alpha = data.get("alpha")
-                beta = data.get("beta")
-                if alpha is not None and beta is not None:
-                    import pandas as pd
-                    x_vals: list[float] = []
-                    y_vals: list[float] = []
-                    for csv in self._mapped_csvs:
-                        try:
-                            df = pd.read_csv(csv)
-                            if "Piccolo" in df.columns:
-                                y = pd.to_numeric(df["Piccolo"], errors="coerce").to_numpy(float)
-                                x = alpha + beta * y
-                                x_vals.extend(x.tolist())
-                                y_vals.extend(y.tolist())
-                        except Exception:
-                            continue
-                    if x_vals and y_vals:
-                        from .setpoints import find_optimal_transmitter_span
-                        opt = find_optimal_transmitter_span(x_vals, y_vals, slope_sign=+1)
-                        sp_path = out / "_report" / "setpoints.json"
-                        sp_path.parent.mkdir(parents=True, exist_ok=True)
-                        sp_path.write_text(json.dumps(opt.setpoints, indent=2))
-                        self.artifacts.append(sp_path)
-        except Exception as e:
-            self.summary["warnings"].append(f"setpoints: {e}")
         self._progress("Translating…")
         self.translate(out)
         self._progress("Reporting…")
@@ -507,17 +488,23 @@ class Orchestrator:
                         key_vals[dst_key] = v
             except Exception:
                 pass
-        span_file = next((p for p in self.artifacts if p.suffix == '.json' and ('setpoint' in p.name.lower() or 'span' in p.name.lower())), None)
+        span_file = next((
+            p
+            for p in self.artifacts
+            if p.suffix == '.json' and ('setpoint' in p.name.lower() or 'span' in p.name.lower())
+        ), None)
         if span_file and span_file.exists():
             try:
                 span_data = json.loads(span_file.read_text())
                 if isinstance(span_data, dict):
-                    span = span_data.get('span')
-                    if span is not None:
-                        key_vals['transmitter_span'] = span
-                    mapping = span_data.get('mapping')
-                    if mapping is not None:
-                        key_vals['transmitter_setpoints'] = mapping
+                    container = span_data.get('setpoints') if 'setpoints' in span_data else span_data
+                    if isinstance(container, dict):
+                        span = container.get('span')
+                        if span is not None:
+                            key_vals['transmitter_span'] = span
+                        mapping = container.get('mapping')
+                        if mapping is not None:
+                            key_vals['transmitter_setpoints'] = mapping
             except Exception:
                 pass
         manifest = {'tables': tables, 'plots': plots, 'key_values': key_vals}
