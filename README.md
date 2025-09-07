@@ -13,7 +13,7 @@ python -m pip install .
 ## Usage
 
 ```bash
-kielproc one-click <workbook> --site <Preset> --baro-override <Pa>
+kielproc one-click <workbook> --site <Preset> --baro <Pa>
 ```
 
 Running `kielproc one-click` executes the full SOP:
