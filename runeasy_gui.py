@@ -6,7 +6,7 @@ Purpose
   • Single-window, operator-proof GUI to run the full SOP pipeline ("Run-Easy") with zero terminal use.
   • Shows key values (α, β, lag, venturi r & β, transmitter span & setpoints) and lists plots/tables from summary.json.
   • Double-click to open artifacts; preview PNGs inline; open run folder / bundle zip.
-  • API‑first (kielproc.run_easy.run_all); silent fallback to CLI `kielproc one-click`.
+  • API‑first (kielproc.run_all); silent fallback to CLI `kielproc one-click`.
 
 Nice-to-haves
   • Remembers last paths/site/baro/folder in a per-user config file.
@@ -112,24 +112,14 @@ def call_runeasy_api_or_cli(
     """Run via API first; fall back to CLI. Return RunResult."""
     # 1) API path
     try:
-        logfn("Using kielproc.run_easy API…")
-        from kielproc.run_easy import run_all  # now valid
-        rd = run_all(
+        logfn("Using kielproc.run_all API…")
+        from kielproc import run_all  # stable API
+        run_dir, smry, _ = run_all(
             str(input_path),
             site=(site or "DefaultSite"),
             baro_override=_try_float(baro),
             strict=strict,
         )
-        if isinstance(rd, (str, Path)):
-            run_dir = Path(rd)
-        elif isinstance(rd, dict):
-            p = rd.get("run_dir") or rd.get("output_dir") or rd.get("path")
-            run_dir = Path(p) if p else (_newest_run_dir(Path.cwd()) or None)
-        else:
-            run_dir = _newest_run_dir(Path.cwd())
-        if not run_dir:
-            raise RuntimeError("API finished but no RUN_* directory was found.")
-        smry = _read_text_json(Path(run_dir) / "summary.json")
         return RunResult(run_dir=Path(run_dir), summary=smry)
     except Exception as e:
         logfn(f"API path unavailable: {e}. Falling back to CLI…")

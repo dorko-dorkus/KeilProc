@@ -641,10 +641,13 @@ def run_all(
     *,
     strict: bool = False,
 ):
-    """Convenience wrapper around :class:`Orchestrator`.
+    """Run the full pipeline for ``src`` and return details.
 
-    Parameters are forwarded to :class:`RunInputs`.  ``site`` may be a preset
-    name or a ``SitePreset`` instance.  Returns the run directory ``Path``.
+    Parameters are forwarded to :class:`RunInputs`. ``site`` may be a preset
+    name or a :class:`SitePreset` instance.  Returns a triple ``(run_dir,
+    summary, artifacts)`` where ``run_dir`` is the output directory ``Path``,
+    ``summary`` contains warning/error details, and ``artifacts`` is a list of
+    generated tables/plots.
     """
 
     if isinstance(site, str):
@@ -657,7 +660,9 @@ def run_all(
         Path(output_base) if output_base else None,
     )
     setattr(run, "strict", strict)
-    return Orchestrator(run).run_all()
+    orch = Orchestrator(run)
+    out = orch.run_all()
+    return out, orch.summary, [str(p) for p in orch.artifacts]
 
 
 # Convenience entry point -----------------------------------------------------
