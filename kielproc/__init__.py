@@ -1,22 +1,43 @@
-"""Package redirect to monorepo implementation.
 
-This stub allows importing ``kielproc`` when running tests from the
-repository root without installing the project. It loads the actual package
-located under ``kielproc_monorepo/kielproc``.
 """
-from __future__ import annotations
+kielproc - Kiel + wall-static baseline processor & legacy piccolo translation.
+"""
 
-import importlib.util
-import sys
-from pathlib import Path
+__version__ = "0.1.0"
 
-_pkg_dir = Path(__file__).resolve().parent.parent / "kielproc_monorepo" / "kielproc"
-_spec = importlib.util.spec_from_file_location(
-    __name__,
-    _pkg_dir / "__init__.py",
-    submodule_search_locations=[str(_pkg_dir)],
+from .physics import map_qs_to_qt, venturi_dp_from_qt, rho_from_pT
+from .lag import estimate_lag_xcorr, shift_series, advance_series, delay_series
+from .deming import deming_fit
+from .pooling import pool_alpha_beta_random_effects, pool_alpha_beta_gls
+from .setpoints import find_optimal_transmitter_span, OptimalSpan
+from .setpoints_csv import setpoints_from_logger_csv
+from .io import load_legacy_excel, load_logger_csv, unify_schema
+from .translate import compute_translation_table, apply_translation
+from .report import write_summary_tables, plot_alignment
+from .qa import qa_indices
+from .aggregate import RunConfig, integrate_run
+from .geometry import (
+    Geometry,
+    duct_area,
+    throat_area,
+    r_ratio,
+    beta_from_geometry,
 )
-_module = importlib.util.module_from_spec(_spec)
-sys.modules[__name__] = _module
-assert _spec.loader is not None
-_spec.loader.exec_module(_module)
+from .legacy_results import ResultsConfig, compute_results as compute_legacy_results
+from .run_easy import SitePreset, RunInputs, OneClickError, Orchestrator, run_easy_legacy
+
+__all__ = [
+    "__version__",
+    "map_qs_to_qt", "venturi_dp_from_qt", "rho_from_pT",
+    "estimate_lag_xcorr", "shift_series", "advance_series", "delay_series",
+    "deming_fit",
+    "pool_alpha_beta_random_effects", "pool_alpha_beta_gls",
+    "find_optimal_transmitter_span", "OptimalSpan", "setpoints_from_logger_csv",
+    "load_legacy_excel", "load_logger_csv", "unify_schema",
+    "compute_translation_table", "apply_translation",
+    "write_summary_tables", "plot_alignment", "qa_indices",
+    "Geometry", "duct_area", "throat_area", "r_ratio", "beta_from_geometry",
+    "RunConfig", "integrate_run",
+    "ResultsConfig", "compute_legacy_results",
+    "SitePreset", "RunInputs", "OneClickError", "Orchestrator", "run_easy_legacy",
+]

@@ -201,8 +201,8 @@ class Orchestrator:
     def map(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Build velocity maps from integrated data."""
         from .gui_adapter import process_legacy_parsed_csv
-        from kielproc.physics import map_qs_to_qt
-        from kielproc.visuals import render_velocity_heatmap
+        from .physics import map_qs_to_qt
+        from .visuals import render_velocity_heatmap
         from .geometry import Geometry, r_ratio
 
         ports_dir = base_dir / "ports_csv"
@@ -367,7 +367,7 @@ class Orchestrator:
     def report(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Emit consolidated HTML/PDF reports."""
         from .gui_adapter import legacy_results_from_csv
-        from kielproc.legacy_results import ResultsConfig
+        from .legacy_results import ResultsConfig
         import math
 
         csv = getattr(self, "_translated_csv", None)
