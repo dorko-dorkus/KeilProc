@@ -83,6 +83,17 @@ class Orchestrator:
         ports.mkdir(exist_ok=True)
         return {"base": base, "ports": ports}
 
+    def _placeholder(self, path: Path, note: str) -> Path:
+        """Create a placeholder file noting why a stage did not run."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            path.write_text(f"placeholder: {note}\n")
+        except Exception:
+            # swallow any failure; this is best-effort
+            pass
+        self.artifacts.append(path)
+        return path
+
     # --- pipeline stages ---------------------------------------------
     def preflight(self) -> None:
         src = self.run.src
@@ -214,6 +225,7 @@ class Orchestrator:
         ports_dir = base_dir / "ports_csv"
         mapped_dir = base_dir / "_mapped"
         mapped_dir.mkdir(parents=True, exist_ok=True)
+        heatmap_path = mapped_dir / "heatmap_velocity.png"
 
         geom_dict = self.run.site.geometry or {}
         # Filter out any unexpected geometry fields so presets with extra
@@ -233,15 +245,17 @@ class Orchestrator:
         pairs: list[tuple[str, Path]] = []
 
         if geom is None:
-            self.summary["warnings"].append("map: geometry unavailable; skipping mapping")
+            note = "map: geometry unavailable; skipping mapping"
+            self.summary["warnings"].append(note)
+            self._placeholder(heatmap_path, note)
             self._pairs = pairs
             return
 
         r = r_ratio(geom)
         if r is None:
-            self.summary["warnings"].append(
-                "map: geometry missing port area ratio; skipping mapping"
-            )
+            note = "map: geometry missing port area ratio; skipping mapping"
+            self.summary["warnings"].append(note)
+            self._placeholder(heatmap_path, note)
             self._pairs = pairs
             return
 
@@ -253,6 +267,7 @@ class Orchestrator:
             if self.strict:
                 raise OneClickError(msg)
             self.summary["warnings"].append(msg)
+            self._placeholder(heatmap_path, msg)
             self._pairs = []
             return
 
@@ -281,15 +296,19 @@ class Orchestrator:
                         f"map {csv.name}: throat missing; wrote qp only (no deltpVent)."
                     )
                 except Exception as e2:
+                    note = f"map: {csv.name}: {e2}"
                     if self.strict:
-                        raise OneClickError(f"map: {csv.name}: {e2}")
-                    self.summary["warnings"].append(f"map: {csv.name}: {e2}")
+                        raise OneClickError(note)
+                    self.summary["warnings"].append(note)
+                    self._placeholder(out_path, note)
 
         try:
             png = render_velocity_heatmap(mapped_dir, pairs, self.run.baro_override_Pa)
             self.artifacts.append(png)
         except Exception as e:
-            self.summary["warnings"].append(f"heatmap: {e}")
+            note = f"heatmap: {e}"
+            self.summary["warnings"].append(note)
+            self._placeholder(heatmap_path, note)
 
         self._pairs = pairs
 
@@ -298,22 +317,32 @@ class Orchestrator:
             if self.strict:
                 raise OneClickError(msg)
             self.summary["warnings"].append(msg)
+            self._placeholder(heatmap_path, msg)
 
 
     def fit(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Fit calibration models."""
 
         mapped = getattr(self, "_mapped_csvs", [])
+        outdir = base_dir / "_fit"
+        outdir.mkdir(parents=True, exist_ok=True)
+        placeholders = [
+            outdir / "alpha_beta_by_block.csv",
+            outdir / "alpha_beta_by_block.json",
+            outdir / "alpha_beta_pooled.csv",
+            outdir / "alpha_beta_pooled.json",
+            outdir / "align.png",
+        ]
         if not mapped:
             msg = "fit: no mapped CSVs available"
             if self.strict:
                 raise OneClickError(msg)
             self.summary["warnings"].append(msg)
+            for p in placeholders:
+                self._placeholder(p, msg)
             return
 
         block_specs = {Path(p).stem: p for p in mapped}
-        outdir = base_dir / "_fit"
-        outdir.mkdir(parents=True, exist_ok=True)
         beta_override = self.run.site.defaults.get("beta_translate")
         try:
             res = fit_alpha_beta(
@@ -335,50 +364,67 @@ class Orchestrator:
                 self._alpha_beta = {"alpha": b0.get("alpha"), "beta": b0.get("beta")}
                 self._lag = b0.get("lag_samples")
         except Exception as e:
+            note = f"fit: {e}"
             if self.strict:
-                raise OneClickError(f"fit: {e}")
-            self.summary["warnings"].append(f"fit: {e}")
+                raise OneClickError(note)
+            self.summary["warnings"].append(note)
+            for p in placeholders:
+                self._placeholder(p, note)
 
     def translate(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Generate control-system lookup tables."""
 
+        outdir = base_dir / "_translated"
+        outdir.mkdir(parents=True, exist_ok=True)
+        default_out = outdir / "translated.csv"
         if not getattr(self, "_alpha_beta", None) or not getattr(self, "_mapped_csvs", None):
             msg = "translate: missing fit results or mapped data"
             if self.strict:
                 raise OneClickError(msg)
             self.summary["warnings"].append(msg)
-            return
-
-        alpha = self._alpha_beta.get("alpha")
-        beta = self._alpha_beta.get("beta")
-        if alpha is None or beta is None:
-            self.summary["warnings"].append("translate: alpha/beta unavailable")
+            self._placeholder(default_out, msg)
             return
 
         src_csv = self._mapped_csvs[0]
-        outdir = base_dir / "_translated"
-        outdir.mkdir(parents=True, exist_ok=True)
         out_path = outdir / f"{Path(src_csv).stem}_translated.csv"
+        alpha = self._alpha_beta.get("alpha")
+        beta = self._alpha_beta.get("beta")
+        if alpha is None or beta is None:
+            note = "translate: alpha/beta unavailable"
+            self.summary["warnings"].append(note)
+            self._placeholder(out_path, note)
+            return
+
         try:
             translate_piccolo(src_csv, alpha, beta, "Piccolo", "Piccolo_translated", out_path)
             self.artifacts.append(out_path)
             self._translated_csv = out_path
         except Exception as e:
+            note = f"translate: {e}"
             if self.strict:
-                raise OneClickError(f"translate: {e}")
-            self.summary["warnings"].append(f"translate: {e}")
+                raise OneClickError(note)
+            self.summary["warnings"].append(note)
+            self._placeholder(out_path, note)
 
     def report(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Emit consolidated HTML/PDF reports."""
         from .legacy_results import ResultsConfig
         import math
 
+        outdir = base_dir / "_report"
+        outdir.mkdir(parents=True, exist_ok=True)
+        csv_out = outdir / "legacy_results.csv"
+        json_out = outdir / "legacy_results.json"
+        sp_path = outdir / "setpoints.json"
         csv = getattr(self, "_translated_csv", None)
         if not csv:
             msg = "report: no translated CSV available"
             if self.strict:
                 raise OneClickError(msg)
             self.summary["warnings"].append(msg)
+            self._placeholder(csv_out, msg)
+            self._placeholder(json_out, msg)
+            self._placeholder(sp_path, msg)
             return
 
         geom = self.run.site.geometry or {}
@@ -392,29 +438,30 @@ class Orchestrator:
                 h = w = s
 
         cfg = ResultsConfig(duct_height_m=h, duct_width_m=w)
-        outdir = base_dir / "_report"
-        outdir.mkdir(parents=True, exist_ok=True)
-        csv_out = outdir / "legacy_results.csv"
         try:
             res = legacy_results_from_csv(csv, cfg, csv_out)
             self.artifacts.append(csv_out)
-            json_out = outdir / "legacy_results.json"
             json_out.write_text(json.dumps(res, indent=2))
             self.artifacts.append(json_out)
             try:
                 from .setpoints_csv import setpoints_from_logger_csv
                 sp = setpoints_from_logger_csv(str(csv), x_col="Piccolo_translated", y_col="Piccolo")
-                sp_path = outdir / "setpoints.json"
                 sp_path.write_text(json.dumps(dataclasses.asdict(sp), indent=2))
                 self.artifacts.append(sp_path)
             except Exception as e2:
+                note = f"setpoints: {e2}"
                 if self.strict:
-                    raise OneClickError(f"setpoints: {e2}")
-                self.summary["warnings"].append(f"setpoints: {e2}")
+                    raise OneClickError(note)
+                self.summary["warnings"].append(note)
+                self._placeholder(sp_path, note)
         except Exception as e:
+            note = f"report: {e}"
             if self.strict:
-                raise OneClickError(f"report: {e}")
-            self.summary["warnings"].append(f"report: {e}")
+                raise OneClickError(note)
+            self.summary["warnings"].append(note)
+            self._placeholder(csv_out, note)
+            self._placeholder(json_out, note)
+            self._placeholder(sp_path, note)
 
     # --- public ------------------------------------------------------
     def run_all(self) -> Path:
