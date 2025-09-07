@@ -125,7 +125,7 @@ def call_runeasy_api_or_cli(input_path: Path, site: Optional[str], baro: Optiona
     if site:
         cmd += ["--site", site]
     if baro:
-        cmd += ["--baro-override", baro]
+        cmd += ["--baro", baro]
     logfn("Running CLI: " + " ".join(cmd))
     try:
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
