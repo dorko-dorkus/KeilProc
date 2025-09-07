@@ -12,6 +12,8 @@ python -m pip install .
 
 ## Usage
 
+### CLI
+
 ```bash
 kielproc one-click <workbook> --site <Preset> --baro <Pa>
 ```
@@ -21,6 +23,14 @@ Running `kielproc one-click` executes the full SOP:
 ```
 Parse → Integrate → Map → Fit → Translate → Report
 ```
+
+### GUI
+
+```bash
+kielproc-gui
+```
+
+`kielproc-gui` provides a Tk interface over the same Run‑Easy pipeline.
 
 Artifacts are written to a `RUN_<STAMP>/` directory, which is also bundled as
 `RUN_<STAMP>__bundle.zip`:
