@@ -49,6 +49,8 @@ class RunInputs:
     output_base: Optional[Path] = None  # If set, RUN_* will be created here
 
 
+from .presets import PRESETS
+
 class OneClickError(Exception):
     """Raised when a hard failure occurs during the one-click run."""
 
@@ -585,6 +587,37 @@ class Orchestrator:
             raise OneClickError("report: no tables/plots produced")
         self._progress("Done")
         return out
+
+
+# Public API ---------------------------------------------------------------
+
+
+def run_all(
+    src: str | Path,
+    site: str | SitePreset = "DefaultSite",
+    baro_override: float | None = None,
+    run_stamp: str | None = None,
+    output_base: str | Path | None = None,
+    *,
+    strict: bool = False,
+):
+    """Convenience wrapper around :class:`Orchestrator`.
+
+    Parameters are forwarded to :class:`RunInputs`.  ``site`` may be a preset
+    name or a ``SitePreset`` instance.  Returns the run directory ``Path``.
+    """
+
+    if isinstance(site, str):
+        site = PRESETS[site]
+    run = RunInputs(
+        Path(src),
+        site,
+        baro_override,
+        run_stamp,
+        Path(output_base) if output_base else None,
+    )
+    setattr(run, "strict", strict)
+    return Orchestrator(run).run_all()
 
 
 # Convenience entry point -----------------------------------------------------
