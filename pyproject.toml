@@ -21,6 +21,10 @@ gui = []
 
 [project.scripts]
 kielproc = "kielproc.cli:main"
+kielproc-gui = "runeasy_gui:main"
+
+[tool.setuptools]
+py-modules = ["runeasy_gui"]
 
 [tool.setuptools.packages.find]
 include = ["kielproc"]
