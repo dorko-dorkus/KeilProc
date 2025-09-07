@@ -133,6 +133,8 @@ def call_runeasy_api_or_cli(
         cmd += ["--site", site]
     if baro:
         cmd += ["--baro", baro]
+    if strict:
+        cmd.append("--strict")
     logfn("Running CLI: " + " ".join(cmd))
     try:
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
@@ -245,7 +247,7 @@ class RunEasyApp(ttk.Frame):
         self.path_var = tk.StringVar(value=self.cfg.get("last_path", ""))
         self.site_var = tk.StringVar(value=self.cfg.get("last_site", ""))
         self.baro_var = tk.StringVar(value=str(self.cfg.get("last_baro", "")))
-        self.strict_var = tk.BooleanVar(value=False)
+        self.strict_var = tk.BooleanVar(value=True)
         self.version_var = tk.StringVar(value=self._get_pkg_version())
         self.run_dir: Optional[Path] = None
         self.summary: Optional[dict] = None
@@ -278,6 +280,9 @@ class RunEasyApp(ttk.Frame):
             ttk.Entry(r2, textvariable=self.site_var, width=28).pack(side="left", padx=6)
         ttk.Label(r2, text="Baro override (Pa, optional):").pack(side="left", padx=(16, 4))
         ttk.Entry(r2, textvariable=self.baro_var, width=16).pack(side="left")
+
+        r3 = ttk.Frame(frm); r3.pack(fill="x", pady=6)
+        ttk.Checkbutton(r3, text="Strict (fail-fast)", variable=self.strict_var).pack(side="left")
 
         # ----- Actions -----
         act = ttk.Frame(self)
