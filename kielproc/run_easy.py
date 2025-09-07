@@ -11,11 +11,12 @@ exercised in isolation.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Callable
 import dataclasses
 import json
-import time
+from zoneinfo import ZoneInfo
 
 from .aggregate import integrate_run, RunConfig, discover_pairs
 from .gui_adapter import (
@@ -76,8 +77,8 @@ class Orchestrator:
     def _stamp(self) -> str:
         if self.run.run_stamp:
             return self.run.run_stamp
-        # Assume system clock already set to NZT to avoid tz deps.
-        return time.strftime("%Y%m%d_%H%M")
+        # Localize to NZT explicitly to avoid relying on system timezone.
+        return datetime.now(ZoneInfo(NZT)).strftime("%Y%m%d_%H%M")
 
     def _mkdirs(self, base: Path) -> dict[str, Path]:
         base.mkdir(parents=True, exist_ok=True)
