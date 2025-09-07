@@ -216,6 +216,10 @@ class Orchestrator:
         self.artifacts.append(ref_json)
 
         self._pairs = res.get("pairs", [])
+        self._skipped = res.get("skipped", [])
+        if self._skipped:
+            for name, reason in self._skipped:
+                self.summary["warnings"].append(f"integrate {name}: {reason}")
 
     
     def map(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
@@ -567,8 +571,43 @@ class Orchestrator:
         ]
         key_vals = {k: key_vals.get(k) for k in required_keys}
 
-        manifest = {'tables': tables, 'plots': plots, 'key_values': key_vals}
-        manifest_path = out / 'summary.json'
+        qa_gates = {"delta_opp_max": 0.01, "w_max": 0.002}
+        venturi = getattr(self, "_venturi", {})
+        inputs = {
+            "baro_override_Pa": self.run.baro_override_Pa,
+            "site": self.run.site.name,
+            "r": venturi.get("r"),
+            "beta": venturi.get("beta"),
+            "reference": None,
+        }
+        if ref and ref.exists():
+            try:
+                ref_data = json.loads(ref.read_text())
+                for candidate in (
+                    "delta_p_vent_est_pa",
+                    "q_t_pa",
+                    "q_s_pa",
+                ):
+                    if ref_data.get(candidate) is not None:
+                        inputs["reference"] = candidate
+                        break
+            except Exception:
+                pass
+
+        manifest = {
+            "tables": tables,
+            "plots": plots,
+            "key_values": key_vals,
+            "qa_gates": qa_gates,
+            "inputs": inputs,
+        }
+        skipped = getattr(self, "_skipped", [])
+        if skipped:
+            manifest["skipped_files"] = [
+                {"file": f, "reason": r} for f, r in skipped
+            ]
+
+        manifest_path = out / "summary.json"
         manifest_path.write_text(json.dumps(manifest, indent=2))
         self.artifacts.append(manifest_path)
         try:

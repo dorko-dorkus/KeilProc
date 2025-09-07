@@ -42,3 +42,12 @@ def test_summary_contains_required_keys(tmp_path):
         "transmitter_setpoints": None,
     }
     assert manifest["key_values"] == expected_keys
+    assert manifest["qa_gates"] == {"delta_opp_max": 0.01, "w_max": 0.002}
+    expected_inputs = {
+        "baro_override_Pa": None,
+        "site": "Dummy",
+        "r": None,
+        "beta": None,
+        "reference": None,
+    }
+    assert manifest["inputs"] == expected_inputs
