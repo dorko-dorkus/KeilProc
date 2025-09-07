@@ -13,6 +13,9 @@ python -m pip install .
 If you need to parse legacy `.xls` workbooks, also install `xlrd<2.0`. Modern
 `.xlsx` files are supported out of the box.
 
+Timestamps are localized to New Zealand time using `tzdata`, which is installed
+as part of the package dependencies.
+
 ## Usage
 
 ### CLI
