@@ -1,12 +1,7 @@
 import numpy as np
-import numpy as np
 import pandas as pd
 import pytest
 from pathlib import Path
-import sys
-
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.append(str(ROOT))
 
 from kielproc.gui_adapter import fit_alpha_beta
 from kielproc.setpoints import find_optimal_transmitter_span
