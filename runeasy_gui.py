@@ -99,13 +99,20 @@ class RunResult:
 
 # ----------------- core calls -----------------
 
-def call_runeasy_api_or_cli(input_path: Path, site: Optional[str], baro: Optional[str], logfn) -> RunResult:
+def call_runeasy_api_or_cli(
+    input_path: Path, site: Optional[str], baro: Optional[str], logfn, strict: bool = False
+) -> RunResult:
     """Run via API first; fall back to CLI. Return RunResult."""
     # 1) API path
     try:
         logfn("Using kielproc.run_easy API…")
-        from kielproc.run_easy import run_all  # type: ignore
-        rd = run_all(str(input_path), site=(site or None), baro_override=_try_float(baro))
+        from kielproc.run_easy import run_all  # now valid
+        rd = run_all(
+            str(input_path),
+            site=(site or "DefaultSite"),
+            baro_override=_try_float(baro),
+            strict=strict,
+        )
         if isinstance(rd, (str, Path)):
             run_dir = Path(rd)
         elif isinstance(rd, dict):
@@ -238,6 +245,7 @@ class RunEasyApp(ttk.Frame):
         self.path_var = tk.StringVar(value=self.cfg.get("last_path", ""))
         self.site_var = tk.StringVar(value=self.cfg.get("last_site", ""))
         self.baro_var = tk.StringVar(value=str(self.cfg.get("last_baro", "")))
+        self.strict_var = tk.BooleanVar(value=False)
         self.version_var = tk.StringVar(value=self._get_pkg_version())
         self.run_dir: Optional[Path] = None
         self.summary: Optional[dict] = None
@@ -381,7 +389,9 @@ class RunEasyApp(ttk.Frame):
 
         def worker():
             try:
-                result = call_runeasy_api_or_cli(p, site, baro, self._log)
+                result = call_runeasy_api_or_cli(
+                    p, site, baro, self._log, strict=self.strict_var.get()
+                )
                 self.run_dir = result.run_dir
                 self.summary = result.summary
                 self._log(f"Run complete: {result.run_dir}")
