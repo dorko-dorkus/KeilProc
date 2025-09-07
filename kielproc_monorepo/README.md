@@ -1,24 +1,38 @@
 
 # Kiel / Piccolo Processing Suite (Mono-repo)
 
-This repository combines:
-- `kielproc/` — backend library for physics mapping, lag removal, Deming α/β, pooling, and plotting.
-- `tests/` — small sanity tests.
+Backend library for processing differential pressure data from Kiel probes and legacy piccolo tubes.
 
-## Quick start
+## Installation
+
 ```bash
-python -m pip install -r requirements.txt -c constraints.txt
+python -m pip install .
 ```
 
-## GUI features
-- Map verification-plane qs→qt→Δp_vent with inputs `r=As/At`, `beta=dt/D1`, `sampling Hz`.
-- Translate legacy piccolo via cross-correlation lag removal + Deming regression; pooled α,β.
-- Flow heat map (θ vs z) from legacy static arrays; optional geometry scaling (D1,D2,L).
-- Polar cross-section slice at a selected plane (scaled radius if geometry provided).
+## Usage
 
-## Outputs
-Files are written under the chosen Output directory: CSV tables and PNG plots.
+```bash
+kielproc one-click <workbook> --site <Preset> --baro-override <Pa>
+```
+
+Running `kielproc one-click` executes the full pipeline:
+
+```
+Parse → Integrate → Map → Fit → Translate → Report
+```
+
+Artifacts are written to a `RUN_<STAMP>/` directory:
+
+```
+RUN_<STAMP>/
+  run_context.json
+  _integrated/...
+  _fit/...
+  _translate/translated.csv
+  _report/{legacy_results.csv,json,setpoints.json}
+  summary.json
+```
 
 ## Notes
-- Dynamics are processed in samples; seconds derived from Sampling Hz.
-- Throat unknown is fine; geometry is optional for visual scaling only.
+- Dynamics are processed in samples; seconds derived from sampling Hz.
+- Throat unknown is fine; geometry is optional for scaling only.
