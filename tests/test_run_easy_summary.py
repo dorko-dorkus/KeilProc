@@ -38,6 +38,8 @@ def test_summary_contains_required_keys(tmp_path):
         "lag_samples": None,
         "venturi_r": None,
         "venturi_beta": None,
+        "venturi_area_ratio": None,
+        "venturi_mapping": "qt = r^2 * qs; dp = (1 - beta^4) * qt",
         "transmitter_span": None,
         "transmitter_setpoints": None,
         "qa_gates": {"delta_opp_max": 0.01, "w_max": 0.002},
