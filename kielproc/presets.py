@@ -4,7 +4,7 @@ from .run_easy import SitePreset
 PRESETS: dict[str, SitePreset] = {
     "DefaultSite": SitePreset(
         name="DefaultSite",
-        geometry={"duct_diameter_m": 2.5, "ports": 8, "weighting": "equal"},
+        geometry={"duct_width_m": 2.5, "duct_height_m": 2.5},
         instruments={"vp_unit": "Pa", "temp_unit": "C"},
         defaults={"fallback_baro_Pa": 101325},
     )
