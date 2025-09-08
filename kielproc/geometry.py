@@ -41,9 +41,17 @@ def throat_area(g: Geometry) -> float | None:
 
 
 def r_ratio(g: Geometry) -> float | None:
-    # As/At_ports (Kiel static-to-total port area ratio for qs→qt mapping)
-    if g.static_port_area_m2 and g.total_port_area_m2 and g.total_port_area_m2 > 0:
-        return g.static_port_area_m2 / g.total_port_area_m2
+    """Section area ratio r = As / At (verification plane area to venturi throat area).
+
+    Notes:
+      - As is the duct cross-section area at the verification plane.
+      - At is the venturi throat area.
+      - Returns None if either area is missing or invalid.
+    """
+    As = duct_area(g)
+    At = throat_area(g)
+    if As and At and At > 0:
+        return As / At
     return None
 
 
