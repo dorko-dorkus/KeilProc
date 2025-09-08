@@ -31,7 +31,6 @@ from .transmitter import (
     y820_output,
     derive_urv,
     make_setpoint_table,
-    compute_and_write_setpoints,
 )
 
 __all__ = [
@@ -49,5 +48,5 @@ __all__ = [
     "ResultsConfig", "compute_legacy_results",
     "SitePreset", "RunEasyConfig", "run_all",
     "TxParams", "uic_percent", "y820_output", "derive_urv",
-    "make_setpoint_table", "compute_and_write_setpoints",
+    "make_setpoint_table",
 ]
