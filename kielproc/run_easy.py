@@ -612,15 +612,19 @@ class Orchestrator:
             "qa_gates": qa_gates,
             "inputs": inputs,
         }
-        manifest.setdefault("key_values", {}).update({
+        kv = {
             "qa_gates": qa_gates,
-            "site": getattr(self.run.site, "name", "DefaultSite"),
+            "site": getattr(self.run.site, "name", "AdHoc"),
             "baro_override_Pa": self.run.baro_override_Pa,
             "venturi_r": venturi.get("r"),
             "venturi_beta": venturi.get("beta"),
-            "venturi_area_ratio": venturi.get("r"),           # r = As/At
+            "venturi_area_ratio": venturi.get("r"),  # r = As/At
             "venturi_mapping": "qt = r^2 * qs; dp = (1 - beta^4) * qt",
-        })
+        }
+        gsrc = getattr(self.run.site, "_geometry_source", None)
+        if gsrc:
+            kv["geometry_source"] = gsrc
+        manifest.setdefault("key_values", {}).update(kv)
         skipped = getattr(self, "_skipped", [])
         if skipped:
             manifest["skipped_files"] = [
