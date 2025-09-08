@@ -1,593 +1,241 @@
-#!/usr/bin/env python3
-"""
-RunEasy — Tk GUI wrapper for kielproc.run_easy
-
-Purpose
-  • Single-window, operator-proof GUI to run the full SOP pipeline ("Run-Easy") with zero terminal use.
-  • Shows key values (α, β, lag, venturi r & β, transmitter span & setpoints) and lists plots/tables from summary.json.
-  • Double-click to open artifacts; preview PNGs inline; open run folder / bundle zip.
-  • API‑first (kielproc.run_all); silent fallback to CLI `kielproc one-click`.
-
-Nice-to-haves
-  • Remembers last paths/site/baro/folder in a per-user config file.
-  • Drag-and-drop files/folders onto the path entry.
-  • Optional modern theme if `sv_ttk` is installed; otherwise ttk default.
-  • No non‑stdlib hard deps (Pillow preview is optional if present).
-
-Packaging
-  • `pip install .` (your package) then `python runeasy_gui.py` OR expose as console_script: kielproc-gui
-  • One-file app: `pyinstaller --noconsole --onefile --name RunEasy-GUI runeasy_gui.py`
-
-This file is standalone. Drop it anywhere that can import `kielproc`.
-"""
-from __future__ import annotations
-
-import json
-import os
-import sys
-import threading
-import queue
-import subprocess
-import time
-import traceback
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Optional
-
+# runeasy_gui.py — Operator-first UI (text boxes by default), optional presets in Engineering mode
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from pathlib import Path
 
-# ---------- Optional extras ----------
-try:  # optional modern ttk theme
-    import sv_ttk  # type: ignore
-except Exception:  # pragma: no cover
-    sv_ttk = None  # noqa: N816
-
-try:  # optional image preview (falls back to tk only)
-    from PIL import Image, ImageTk  # type: ignore
-except Exception:  # pragma: no cover
-    Image = None  # type: ignore
-    ImageTk = None  # type: ignore
-
-try:  # optional drag-and-drop support
-    from tkinterdnd2 import DND_FILES, TkinterDnD  # type: ignore
-except Exception:  # pragma: no cover
-    DND_FILES = None  # type: ignore
-    TkinterDnD = None  # type: ignore
-
-APP_NAME = "RunEasy-GUI"
-CONFIG_DIR = Path.home() / ".kielproc_gui"
-CONFIG_FILE = CONFIG_DIR / "config.json"
-SITE_PRESETS_TXT = Path(__file__).with_name("site_presets.txt")
-SITE_PRESETS_JSON = Path(__file__).with_name("site_presets.json")
-
-PNG_EXTS = {".png", ".gif", ".ppm"}
-
-# ----------------- helpers -----------------
-
-def _open_path(p: Path) -> None:
-    try:
-        if sys.platform.startswith("win"):
-            os.startfile(p)  # type: ignore[attr-defined]
-        elif sys.platform == "darwin":
-            subprocess.run(["open", str(p)], check=False)
-        else:
-            subprocess.run(["xdg-open", str(p)], check=False)
-    except Exception as e:
-        messagebox.showerror("Open failed", f"{e}")
-
-
-def _newest_run_dir(base: Path) -> Optional[Path]:
-    runs = [p for p in base.glob("RUN_*") if p.is_dir()]
-    if not runs:
-        return None
-    runs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return runs[0]
-
-
-def _read_text_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _try_float(s: Optional[str]) -> Optional[float]:
-    if s is None:
-        return None
-    try:
-        return float(s)
-    except Exception:
-        return None
-
-
-@dataclass
-class RunResult:
-    run_dir: Path
-    summary: dict
-
-
-# ----------------- core calls -----------------
-
-def call_runeasy_api_or_cli(
-    input_path: Path, site: Optional[str], baro: Optional[str], logfn, strict: bool = False
-) -> RunResult:
-    """Run via API first; fall back to CLI. Return RunResult."""
-    # 1) API path
-    try:
-        logfn("Using kielproc.run_all API…")
-        from kielproc import run_all  # stable API
-        run_dir, smry, _ = run_all(
-            str(input_path),
-            site=(site or "DefaultSite"),
-            baro_override=_try_float(baro),
-            strict=strict,
-        )
-        return RunResult(run_dir=Path(run_dir), summary=smry)
-    except Exception as e:
-        logfn(f"API path unavailable: {e}. Falling back to CLI…")
-
-    # 2) CLI path
-    cmd = ["kielproc", "one-click", str(input_path)]
-    if site:
-        cmd += ["--site", site]
-    if baro:
-        cmd += ["--baro", baro]
-    if strict:
-        cmd.append("--strict")
-    logfn("Running CLI: " + " ".join(cmd))
-    try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
-        if proc.stdout:
-            logfn(proc.stdout.rstrip())
-    except FileNotFoundError:
-        raise RuntimeError("kielproc CLI not found and API import failed. Ensure kielproc is installed.")
-
-    run_dir = _newest_run_dir(Path.cwd())
-    if not run_dir:
-        raise RuntimeError("Could not find a RUN_* directory after CLI execution.")
-    smry = _read_text_json(run_dir / "summary.json")
-    return RunResult(run_dir=run_dir, summary=smry)
-
-
-# ----------------- config -----------------
-
-def load_config() -> dict:
-    try:
-        if CONFIG_FILE.exists():
-            return _read_text_json(CONFIG_FILE)
-    except Exception:
-        pass
-    return {}
-
-
-def save_config(cfg: dict) -> None:
-    try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-
-def load_site_presets() -> list[str]:
-    # priority: site_presets.json > site_presets.txt
-    try:
-        if SITE_PRESETS_JSON.exists():
-            data = _read_text_json(SITE_PRESETS_JSON)
-            if isinstance(data, list):
-                return [str(x) for x in data if str(x).strip()]
-    except Exception:
-        pass
-    try:
-        if SITE_PRESETS_TXT.exists():
-            return [ln.strip() for ln in SITE_PRESETS_TXT.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    except Exception:
-        pass
-    return []
-
-
-# ----------------- GUI -----------------
-class ImagePreview(ttk.Frame):
-    """Simple image preview widget (PNG/GIF/PPM). Uses Pillow if available for scaling; otherwise Tk."""
-
-    def __init__(self, master: tk.Misc):
-        super().__init__(master, padding=6)
-        self.canvas = tk.Canvas(self, bg="#1e1e1e", height=260)
-        self.canvas.pack(fill="both", expand=True)
-        self._img_ref = None  # keep reference
-        self._path: Optional[Path] = None
-        self.bind("<Configure>", lambda e: self._render())
-
-    def show(self, path: Optional[Path]):
-        self._path = path
-        self._render()
-
-    def _render(self):
-        cv = self.canvas
-        cv.delete("all")
-        if not self._path or not self._path.exists():
-            cv.create_text(10, 10, anchor="nw", fill="#bbb", text="No preview")
-            return
-        ext = self._path.suffix.lower()
-        w = max(100, cv.winfo_width())
-        h = max(100, cv.winfo_height())
-        try:
-            if Image and ImageTk and ext in PNG_EXTS:
-                im = Image.open(self._path)
-                im.thumbnail((w - 16, h - 16))
-                self._img_ref = ImageTk.PhotoImage(im)
-            else:
-                self._img_ref = tk.PhotoImage(file=str(self._path))
-        except Exception:
-            cv.create_text(10, 10, anchor="nw", fill="#bbb", text="Preview unsupported")
-            return
-        if self._img_ref:
-            cv.create_image(w // 2, h // 2, image=self._img_ref, anchor="center")
+from kielproc.run_easy import run_easy_legacy
+from kielproc.presets import SitePreset, PRESETS  # presets available but NOT required
 
 
 class RunEasyApp(ttk.Frame):
-    def __init__(self, master: tk.Tk):
-        super().__init__(master, padding=10)
+    def __init__(self, master=None):
+        super().__init__(master)
         self.pack(fill="both", expand=True)
+        self._build_ui()
 
-        # Try to load a pretty theme
-        if sv_ttk:
-            try:
-                sv_ttk.set_theme("light")
-            except Exception:
-                pass
-
-        master.title("Run-Easy — SOP Pipeline")
-        master.minsize(900, 640)
-
-        self.cfg = load_config()
-        self.site_presets = load_site_presets()
-
-        # State
-        self.path_var = tk.StringVar(value=self.cfg.get("last_path", ""))
-        self.site_var = tk.StringVar(value=self.cfg.get("last_site", ""))
-        self.baro_var = tk.StringVar(value=str(self.cfg.get("last_baro", "")))
-        self.strict_var = tk.BooleanVar(value=True)
-        self.version_var = tk.StringVar(value=self._get_pkg_version())
-        self.run_dir: Optional[Path] = None
-        self.summary: Optional[dict] = None
-        self._logq: "queue.Queue[str]" = queue.Queue()
-        self._worker: Optional[threading.Thread] = None
-
-        # ----- Top bar -----
+    def _build_ui(self):
         top = ttk.Frame(self)
-        top.pack(fill="x", pady=(2, 8))
-        ttk.Label(top, text="Run-Easy", font=("Segoe UI", 14, "bold")).pack(side="left")
-        ttk.Label(top, textvariable=self.version_var, foreground="#666").pack(side="left", padx=10)
-        ttk.Button(top, text="Settings", command=self._settings).pack(side="right")
-        ttk.Button(top, text="Help", command=self._help).pack(side="right", padx=(0, 6))
+        top.pack(fill="x", padx=8, pady=8)
 
-        # ----- Inputs -----
-        frm = ttk.LabelFrame(self, text="Inputs")
-        frm.pack(fill="x", pady=4)
-
-        r1 = ttk.Frame(frm); r1.pack(fill="x", pady=6)
-        ttk.Label(r1, text="Workbook / Folder:").pack(side="left")
-        self.path_entry = ttk.Entry(r1, textvariable=self.path_var)
-        self.path_entry.pack(side="left", fill="x", expand=True, padx=6)
-        if DND_FILES:
-            try:
-                self.path_entry.drop_target_register(DND_FILES)
-                self.path_entry.dnd_bind("<<Drop>>", self._on_drop_path)
-            except Exception:
-                pass
-        ttk.Button(r1, text="Browse…", command=self._browse).pack(side="left")
-
-        r2 = ttk.Frame(frm); r2.pack(fill="x", pady=6)
-        ttk.Label(r2, text="Site preset:").pack(side="left")
-        if self.site_presets:
-            self.site_combo = ttk.Combobox(r2, textvariable=self.site_var, values=self.site_presets, state="readonly")
-            self.site_combo.pack(side="left", padx=6)
-        else:
-            ttk.Entry(r2, textvariable=self.site_var, width=28).pack(side="left", padx=6)
-        ttk.Label(r2, text="Baro override (Pa, optional):").pack(side="left", padx=(16, 4))
-        ttk.Entry(r2, textvariable=self.baro_var, width=16).pack(side="left")
-
-        r3 = ttk.Frame(frm); r3.pack(fill="x", pady=6)
-        ttk.Checkbutton(r3, text="Strict (fail-fast)", variable=self.strict_var).pack(side="left")
-
-        # ----- Actions -----
-        act = ttk.Frame(self)
-        act.pack(fill="x", pady=8)
-        self.btn_run = ttk.Button(act, text="Run", command=self._start)
-        self.btn_run.pack(side="left")
-        self.btn_open = ttk.Button(act, text="Open Run Folder", command=self._open_run, state="disabled")
-        self.btn_open.pack(side="left", padx=6)
-        self.btn_zip = ttk.Button(act, text="Open Bundle Zip", command=self._open_zip, state="disabled")
-        self.btn_zip.pack(side="left")
-        self.prog = ttk.Progressbar(act, mode="indeterminate")
-        self.prog.pack(side="right", fill="x", expand=True, padx=6)
-
-        # ----- Middle: Key values + Artifact lists + Preview -----
-        mid = ttk.Frame(self); mid.pack(fill="both", expand=True)
-
-        # Key values panel
-        kv = ttk.LabelFrame(mid, text="Key values")
-        kv.pack(side="left", fill="y", padx=(0, 8), pady=4)
-        self.kv_alpha = tk.StringVar(); self.kv_beta = tk.StringVar()
-        self.kv_lag = tk.StringVar(); self.kv_r = tk.StringVar(); self.kv_vbeta = tk.StringVar()
-        self.kv_span = tk.StringVar(); self.kv_setpts = tk.StringVar()
-        for lbl, var in (
-            ("Pooled α (alpha):", self.kv_alpha),
-            ("Pooled β (beta):", self.kv_beta),
-            ("Lag (samples):", self.kv_lag),
-            ("r (venturi):", self.kv_r),
-            ("β (venturi):", self.kv_vbeta),
-            ("Transmitter span (Pa):", self.kv_span),
-            ("Set-points (4–20 mA):", self.kv_setpts),
-        ):
-            row = ttk.Frame(kv); row.pack(fill="x", pady=3, padx=8)
-            ttk.Label(row, text=lbl, width=26).pack(side="left")
-            ttk.Label(row, textvariable=var).pack(side="left")
-
-        # Artifacts panel
-        art = ttk.LabelFrame(mid, text="Artifacts")
-        art.pack(side="left", fill="both", expand=True, pady=4)
-
-        columns = ("type", "path")
-        self.tree = ttk.Treeview(art, columns=columns, show="headings", selectmode="browse")
-        self.tree.heading("type", text="Type")
-        self.tree.heading("path", text="Path")
-        self.tree.column("type", width=86, stretch=False)
-        self.tree.column("path", width=380, stretch=True)
-        self.tree.pack(fill="both", expand=True)
-        self.tree.bind("<Double-1>", self._open_selected)
-        self.tree.bind("<<TreeviewSelect>>", self._on_select)
-
-        btns = ttk.Frame(art); btns.pack(fill="x")
-        ttk.Button(btns, text="Open selected", command=self._open_selected).pack(side="left")
-        ttk.Button(btns, text="Copy path", command=self._copy_path).pack(side="left", padx=6)
-
-        # Preview panel
-        prev = ttk.LabelFrame(mid, text="Preview")
-        prev.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=4)
-        self.preview = ImagePreview(prev)
-        self.preview.pack(fill="both", expand=True)
-
-        # Log panel
-        lg = ttk.LabelFrame(self, text="Log")
-        lg.pack(fill="both", expand=False)
-        self.logw = tk.Text(lg, height=10, wrap="word", state="disabled")
-        self.logw.pack(fill="both", expand=True)
-
-        # log pump
-        self.after(120, self._drain_log)
-
-    # ----- UI helpers -----
-    def _get_pkg_version(self) -> str:
-        try:
-            import importlib.metadata as md  # py3.8+
-            v = md.version("kielproc")
-            return f"kielproc {v}"
-        except Exception:
-            return "kielproc (version unknown)"
-
-    def _update_last_path(self, path: str) -> None:
-        self.cfg["last_path"] = str(path)
-        p = Path(path)
-        self.cfg["last_folder"] = str(p.parent if p.is_file() else p)
-
-    def _on_drop_path(self, event) -> None:  # pragma: no cover - GUI interaction
-        path = event.data.strip()
-        if path.startswith("{") and path.endswith("}"):
-            path = path[1:-1]
-        if " " in path and not Path(path).exists():
-            path = path.split()[0]
-        self.path_var.set(path)
-        self._update_last_path(path)
-        save_config(self.cfg)
-        return "break"
-
-    def _browse(self) -> None:
-        initdir = self.cfg.get("last_folder")
-        path = filedialog.askopenfilename(title="Select workbook", initialdir=initdir)
-        if not path:
-            path = filedialog.askdirectory(title="Or select a folder", initialdir=initdir)
-        if path:
-            self.path_var.set(path)
-            self._update_last_path(path)
-            save_config(self.cfg)
-
-    def _start(self) -> None:
-        p = Path(self.path_var.get().strip())
-        if not p.exists():
-            messagebox.showerror("Input required", "Select a workbook file or a folder.")
-            return
-        site = self.site_var.get().strip() or None
-        baro = self.baro_var.get().strip() or None
-        if baro and _try_float(baro) is None:
-            messagebox.showerror("Invalid baro", "Enter barometric override in Pascals (e.g., 101325).")
-            return
-
-        # persist last values
-        self._update_last_path(str(p))
-        self.cfg["last_site"] = site or ""
-        self.cfg["last_baro"] = baro or ""
-        save_config(self.cfg)
-
-        # reset UI
-        self.btn_run.configure(state="disabled")
-        self.btn_open.configure(state="disabled")
-        self.btn_zip.configure(state="disabled")
-        self._set_keys(
-            alpha=None,
-            beta=None,
-            lag_samples=None,
-            lag_seconds=None,
-            r=None,
-            beta_v=None,
-            span=None,
-            setpts=None,
+        ttk.Label(top, text="Workbook").grid(row=0, column=0, sticky="w")
+        self.input_var = tk.StringVar()
+        ttk.Entry(top, textvariable=self.input_var, width=56).grid(
+            row=0, column=1, sticky="ew", padx=6
         )
-        self._fill_tree([])
-        self.preview.show(None)
-        self._log("Starting…")
-        self.prog.start(12)
+        ttk.Button(top, text="Browse…", command=self._pick_input).grid(
+            row=0, column=2, padx=6
+        )
 
-        def worker():
-            try:
-                result = call_runeasy_api_or_cli(
-                    p, site, baro, self._log, strict=self.strict_var.get()
+        ttk.Label(top, text="Run label (site tag)").grid(row=1, column=0, sticky="w")
+        self.site_tag_var = tk.StringVar(value="AdHoc")
+        ttk.Entry(top, textvariable=self.site_tag_var, width=20).grid(
+            row=1, column=1, sticky="w", padx=6
+        )
+
+        ttk.Label(top, text="Baro override (Pa)").grid(row=1, column=2, sticky="e")
+        self.baro_var = tk.StringVar()
+        ttk.Entry(top, textvariable=self.baro_var, width=14).grid(
+            row=1, column=3, sticky="w", padx=6
+        )
+
+        self.strict_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(top, text="Strict (fail fast)", variable=self.strict_var).grid(
+            row=1, column=4, sticky="w"
+        )
+
+        # Engineering mode toggle (optional presets)
+        eng = ttk.Frame(self)
+        eng.pack(fill="x", padx=8, pady=(0, 8))
+        self.use_preset_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            eng,
+            text="Engineering mode: use preset geometry",
+            variable=self.use_preset_var,
+            command=self._toggle_preset_mode,
+        ).pack(side="left")
+
+        # Preset picker (hidden until engineering mode enabled)
+        self.preset_row = ttk.Frame(self)
+        self.preset_row.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Label(self.preset_row, text="Preset site").grid(row=0, column=0, sticky="w")
+        self.preset_site_var = tk.StringVar()
+        names = sorted(PRESETS.keys())
+        self.preset_site_var.set(names[0] if names else "")
+        self.preset_menu = ttk.OptionMenu(
+            self.preset_row, self.preset_site_var, self.preset_site_var.get(), *names
+        )
+        self.preset_menu.grid(row=0, column=1, sticky="w", padx=6)
+        self.preset_row.grid_remove()  # hidden by default
+
+        # Geometry text boxes (default path)
+        geo = ttk.LabelFrame(self, text="Geometry — enter areas OR width×height")
+        geo.pack(fill="x", padx=8, pady=8)
+        self.geo_frame = geo
+
+        ttk.Label(geo, text="Duct area As (m²)").grid(row=0, column=0, sticky="w")
+        self.As_var = tk.StringVar()
+        ttk.Entry(geo, textvariable=self.As_var, width=12).grid(
+            row=0, column=1, padx=6
+        )
+        ttk.Label(geo, text="or Width (m)").grid(row=0, column=2, sticky="e")
+        self.Ws_var = tk.StringVar()
+        ttk.Entry(geo, textvariable=self.Ws_var, width=10).grid(
+            row=0, column=3, padx=4
+        )
+        ttk.Label(geo, text="Height (m)").grid(row=0, column=4, sticky="e")
+        self.Hs_var = tk.StringVar()
+        ttk.Entry(geo, textvariable=self.Hs_var, width=10).grid(
+            row=0, column=5, padx=4
+        )
+
+        ttk.Label(geo, text="Throat area At (m²)").grid(row=1, column=0, sticky="w")
+        self.At_var = tk.StringVar()
+        ttk.Entry(geo, textvariable=self.At_var, width=12).grid(
+            row=1, column=1, padx=6
+        )
+        ttk.Label(geo, text="or Width (m)").grid(row=1, column=2, sticky="e")
+        self.Wt_var = tk.StringVar()
+        ttk.Entry(geo, textvariable=self.Wt_var, width=10).grid(
+            row=1, column=3, padx=4
+        )
+        ttk.Label(geo, text="Height (m)").grid(row=1, column=4, sticky="e")
+        self.Ht_var = tk.StringVar()
+        ttk.Entry(geo, textvariable=self.Ht_var, width=10).grid(
+            row=1, column=5, padx=4
+        )
+
+        ttk.Label(geo, text="Venturi inlet D1 (m, optional)").grid(
+            row=2, column=0, sticky="w"
+        )
+        self.D1_var = tk.StringVar()
+        ttk.Entry(geo, textvariable=self.D1_var, width=12).grid(
+            row=2, column=1, padx=6
+        )
+        ttk.Label(geo, text="Throat dt (m, optional)").grid(row=2, column=2, sticky="e")
+        self.dt_var = tk.StringVar()
+        ttk.Entry(geo, textvariable=self.dt_var, width=10).grid(
+            row=2, column=3, padx=4
+        )
+
+        # Controls
+        bottom = ttk.Frame(self)
+        bottom.pack(fill="x", padx=8, pady=8)
+        ttk.Button(bottom, text="RUN", command=self._run).pack(side="left")
+        self.log = tk.Text(self, height=14)
+        self.log.pack(fill="both", expand=True, padx=8, pady=4)
+
+    def _toggle_preset_mode(self):
+        use = bool(self.use_preset_var.get())
+        # Show/hide preset picker
+        if use:
+            self.preset_row.grid()
+        else:
+            self.preset_row.grid_remove()
+        # Enable/disable geometry text fields
+        state = "disabled" if use else "normal"
+        for w in self.geo_frame.winfo_children():
+            if isinstance(w, ttk.Entry):
+                w.configure(state=state)
+
+    def _pick_input(self):
+        p = filedialog.askopenfilename(
+            title="Select legacy workbook", filetypes=[("Excel", "*.xlsx *.xls")]
+        )
+        if p:
+            self.input_var.set(p)
+
+    def _f(self, s: str):
+        s = (s or "").strip()
+        return None if s == "" else float(s)
+
+    def _collect_geometry_from_textboxes(self) -> dict:
+        As = self._f(self.As_var.get())
+        Ws = self._f(self.Ws_var.get())
+        Hs = self._f(self.Hs_var.get())
+        At = self._f(self.At_var.get())
+        Wt = self._f(self.Wt_var.get())
+        Ht = self._f(self.Ht_var.get())
+        D1 = self._f(self.D1_var.get())
+        dt = self._f(self.dt_var.get())
+
+        g = {}
+        if As is not None:
+            g["duct_area_m2"] = As
+        elif Ws is not None and Hs is not None:
+            g["duct_width_m"] = Ws
+            g["duct_height_m"] = Hs
+        else:
+            raise ValueError("Provide DUCT area (As) or width & height.")
+
+        if At is not None:
+            g["throat_area_m2"] = At
+        elif Wt is not None and Ht is not None:
+            g["throat_width_m"] = Wt
+            g["throat_height_m"] = Ht
+        else:
+            raise ValueError("Provide THROAT area (At) or width & height.")
+
+        if D1 is not None:
+            g["D1_m"] = D1
+        if dt is not None:
+            g["dt_m"] = dt
+        return g
+
+    def _run(self):
+        try:
+            wb = Path(self.input_var.get().strip())
+            if not wb.exists():
+                messagebox.showerror("Missing workbook", "Choose a valid workbook file.")
+                return
+
+            baro = self._f(self.baro_var.get())
+            strict = bool(self.strict_var.get())
+            site_label = (self.site_tag_var.get() or "AdHoc").strip()
+
+            if self.use_preset_var.get():
+                # Engineering mode: use preset geometry
+                name = self.preset_site_var.get()
+                if name not in PRESETS:
+                    raise ValueError(f"Unknown preset '{name}'")
+                site = PRESETS[name]
+                if not site.geometry:
+                    raise ValueError(f"Preset '{name}' has no geometry set.")
+                setattr(site, "_geometry_source", f"gui:preset:{name}")
+            else:
+                # Default path: text boxes
+                geom = self._collect_geometry_from_textboxes()
+                site = SitePreset(
+                    name=site_label,
+                    geometry=geom,
+                    instruments={"vp_unit": "Pa", "temp_unit": "C"},
                 )
-                self.run_dir = result.run_dir
-                self.summary = result.summary
-                self._log(f"Run complete: {result.run_dir}")
-                self._populate_from_summary(result.summary, result.run_dir)
-                self.btn_open.configure(state="normal")
-                bundle = next(result.run_dir.glob("*__bundle.zip"), None)
-                self.btn_zip.configure(state=("normal" if bundle else "disabled"))
-            except Exception as e:
-                self._log("ERROR: " + str(e))
-                self._log(traceback.format_exc())
-                messagebox.showerror("Run-Easy failed", str(e))
-            finally:
-                self.btn_run.configure(state="normal")
-                self.prog.stop()
+                setattr(site, "_geometry_source", "gui:textbox")
 
-        self._worker = threading.Thread(target=worker, daemon=True)
-        self._worker.start()
+            out_dir, summary, artifacts = run_easy_legacy(
+                wb, site, baro_override_Pa=baro, strict=strict
+            )
+            self._log(f"OK → {out_dir}\nArtifacts: {len(artifacts)}\n")
+        except Exception as e:
+            messagebox.showerror("Run failed", str(e))
+            self._log(f"ERROR: {e}\n")
 
-    def _settings(self) -> None:
-        msg = (
-            "Settings\n\n"
-            "• Site presets: place 'site_presets.json' (list of strings) or 'site_presets.txt' next to this app.\n"
-            "• Defaults are remembered per user in ~/.kielproc_gui/config.json.\n"
-            "• This GUI calls kielproc.run_easy (API), then falls back to the CLI if needed."
-        )
-        messagebox.showinfo("Settings", msg)
-
-    def _help(self) -> None:
-        msg = (
-            "Run-Easy usage\n\n"
-            "1) Choose a workbook or folder; choose a site preset; optionally set baro override (Pa).\n"
-            "2) Click Run.\n"
-            "3) When finished, key values show here; open the run folder or any artifact from the list."
-        )
-        messagebox.showinfo("Help", msg)
-
-    def _open_run(self) -> None:
-        if self.run_dir:
-            _open_path(self.run_dir)
-
-    def _open_zip(self) -> None:
-        if not self.run_dir:
-            return
-        z = next(self.run_dir.glob("*__bundle.zip"), None)
-        if z:
-            _open_path(z)
-
-    def _on_select(self, _event=None) -> None:
-        sel = self._current_tree_path()
-        if sel and sel.suffix.lower() in PNG_EXTS:
-            self.preview.show(sel)
-        else:
-            self.preview.show(None)
-
-    def _open_selected(self, _event=None) -> None:
-        p = self._current_tree_path()
-        if p and p.exists():
-            _open_path(p)
-
-    def _copy_path(self) -> None:
-        p = self._current_tree_path()
-        if not p:
-            return
-        self.clipboard_clear()
-        self.clipboard_append(str(p))
-        self._log(f"Copied path: {p}")
-
-    def _current_tree_path(self) -> Optional[Path]:
-        item = self.tree.focus()
-        if not item:
-            return None
-        values = self.tree.item(item, "values")
-        if len(values) >= 2:
-            return Path(values[1])
-        return None
-
-    def _populate_from_summary(self, smry: dict, run_dir: Path) -> None:
-        kv = smry.get("key_values", {}) or {}
-        alpha = kv.get("alpha")
-        beta = kv.get("beta")
-        lag = kv.get("lag_samples")
-        r = kv.get("venturi_r")
-        beta_v = kv.get("venturi_beta")
-        span = kv.get("transmitter_span")
-        setpts = kv.get("transmitter_setpoints")
-        inputs = smry.get("inputs", {}) or {}
-        sampling_hz = inputs.get("sampling_hz") or inputs.get("sampling_rate_hz") or inputs.get("sampling_rate")
-        try:
-            lag_s = float(lag) / float(sampling_hz) if lag is not None and sampling_hz else None
-        except Exception:
-            lag_s = None
-        self._set_keys(alpha, beta, lag, lag_s, r, beta_v, span, setpts)
-
-        rows: list[tuple[str, str]] = []
-        for t in smry.get("plots", []) or []:
-            p = (run_dir / t) if not os.path.isabs(t) else Path(t)
-            rows.append(("plot", str(p)))
-        for t in smry.get("tables", []) or []:
-            p = (run_dir / t) if not os.path.isabs(t) else Path(t)
-            rows.append(("table", str(p)))
-        self._fill_tree(rows)
-
-    def _set_keys(self, alpha, beta, lag_samples, lag_seconds, r, beta_v, span, setpts) -> None:
-        def fmt(v, default="—"):
-            return default if v in (None, "", [], {}) else str(v)
-        self.kv_alpha.set(fmt(alpha))
-        self.kv_beta.set(fmt(beta))
-        if lag_samples in (None, "", [], {}):
-            self.kv_lag.set("—")
-        else:
-            lag_txt = str(lag_samples)
-            if lag_seconds not in (None, "", [], {}):
-                lag_txt += f" ({float(lag_seconds):.2f} s)"
-            self.kv_lag.set(lag_txt)
-        self.kv_r.set(fmt(r))
-        self.kv_vbeta.set(fmt(beta_v))
-        if isinstance(span, (list, tuple)) and len(span) == 2:
-            self.kv_span.set(f"{span[0]} .. {span[1]} Pa")
-        else:
-            self.kv_span.set(fmt(span))
-        if isinstance(setpts, dict):
-            self.kv_setpts.set(f"4 mA: {setpts.get('mA4')}  |  20 mA: {setpts.get('mA20')}")
-        else:
-            self.kv_setpts.set(fmt(setpts))
-
-    def _fill_tree(self, rows: list[tuple[str, str]]):
-        self.tree.delete(*self.tree.get_children())
-        for typ, path in rows:
-            self.tree.insert("", "end", values=(typ, path))
-
-    # ----- logging pump -----
-    def _log(self, msg: str) -> None:
-        stamp = time.strftime("%H:%M:%S")
-        self._logq.put(f"[{stamp}] {msg}")
-
-    def _drain_log(self) -> None:
-        try:
-            while True:
-                line = self._logq.get_nowait()
-                self.logw.configure(state="normal")
-                self.logw.insert("end", line + "\n")
-                self.logw.see("end")
-                self.logw.configure(state="disabled")
-        except queue.Empty:
-            pass
-        self.after(120, self._drain_log)
+    def _log(self, msg: str):
+        self.log.insert("end", msg)
+        self.log.see("end")
 
 
-def main() -> None:
-    root = TkinterDnD.Tk() if TkinterDnD else tk.Tk()
+def main():
+    root = tk.Tk()
+    root.title("KeilProc — One-Click")
+    root.geometry("860x580")
     try:
-        root.iconbitmap(default="")  # no external icon dependency
+        root.tk.call("tk", "scaling", 1.25)
     except Exception:
         pass
-    app = RunEasyApp(root)
+    app = RunEasyApp(master=root)
     root.mainloop()
 
 
 if __name__ == "__main__":
     main()
+
