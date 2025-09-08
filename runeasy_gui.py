@@ -26,21 +26,30 @@ class RunEasyApp(ttk.Frame):
             row=0, column=2, padx=6
         )
 
-        ttk.Label(top, text="Run label (site tag)").grid(row=1, column=0, sticky="w")
-        self.site_tag_var = tk.StringVar(value="AdHoc")
-        ttk.Entry(top, textvariable=self.site_tag_var, width=20).grid(
-            row=1, column=1, sticky="w", padx=6
+        ttk.Label(top, text="Output directory").grid(row=1, column=0, sticky="w")
+        self.output_var = tk.StringVar()
+        ttk.Entry(top, textvariable=self.output_var, width=56).grid(
+            row=1, column=1, sticky="ew", padx=6
+        )
+        ttk.Button(top, text="Browse…", command=self._pick_output).grid(
+            row=1, column=2, padx=6
         )
 
-        ttk.Label(top, text="Baro override (Pa)").grid(row=1, column=2, sticky="e")
+        ttk.Label(top, text="Run label (site tag)").grid(row=2, column=0, sticky="w")
+        self.site_tag_var = tk.StringVar(value="AdHoc")
+        ttk.Entry(top, textvariable=self.site_tag_var, width=20).grid(
+            row=2, column=1, sticky="w", padx=6
+        )
+
+        ttk.Label(top, text="Baro override (Pa)").grid(row=2, column=2, sticky="e")
         self.baro_var = tk.StringVar()
         ttk.Entry(top, textvariable=self.baro_var, width=14).grid(
-            row=1, column=3, sticky="w", padx=6
+            row=2, column=3, sticky="w", padx=6
         )
 
         self.strict_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(top, text="Strict (fail fast)", variable=self.strict_var).grid(
-            row=1, column=4, sticky="w"
+            row=2, column=4, sticky="w"
         )
 
         # Engineering mode toggle (optional presets)
@@ -144,6 +153,11 @@ class RunEasyApp(ttk.Frame):
         if p:
             self.input_var.set(p)
 
+    def _pick_output(self):
+        p = filedialog.askdirectory(title="Select output directory")
+        if p:
+            self.output_var.set(p)
+
     def _f(self, s: str):
         s = (s or "").strip()
         return None if s == "" else float(s)
@@ -191,6 +205,8 @@ class RunEasyApp(ttk.Frame):
             baro = self._f(self.baro_var.get())
             strict = bool(self.strict_var.get())
             site_label = (self.site_tag_var.get() or "AdHoc").strip()
+            out_base = self.output_var.get().strip()
+            output_base = Path(out_base) if out_base else None
 
             if self.use_preset_var.get():
                 # Engineering mode: use preset geometry
@@ -212,7 +228,7 @@ class RunEasyApp(ttk.Frame):
                 setattr(site, "_geometry_source", "gui:textbox")
 
             out_dir, summary, artifacts = run_easy_legacy(
-                wb, site, baro_override_Pa=baro, strict=strict
+                wb, site, baro_override_Pa=baro, output_base=output_base, strict=strict
             )
             self._log(f"OK → {out_dir}\nArtifacts: {len(artifacts)}\n")
         except Exception as e:
