@@ -137,7 +137,6 @@ class Orchestrator:
 
     def integrate(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Integrate per-port files into duct aggregates."""
-        import math
         from .geometry import Geometry, r_ratio, beta_from_geometry
         from dataclasses import fields as dataclass_fields
 
@@ -146,14 +145,18 @@ class Orchestrator:
         geom_dict = self.run.site.geometry or {}
         h = geom_dict.get("duct_height_m")
         w = geom_dict.get("duct_width_m")
+        A = geom_dict.get("duct_area_m2")
+        if A is not None:
+            if (h is not None) ^ (w is not None):
+                raise OneClickError(
+                    "Provide both duct_height_m and duct_width_m or a single duct_area_m2, not a mix."
+                )
+            s = float(A) ** 0.5
+            h, w = s, s
         if h is None or w is None:
-            d = geom_dict.get("duct_diameter_m")
-            if d:
-                A = math.pi * (float(d) ** 2) / 4.0
-                s = math.sqrt(A)
-                h = w = s
-        if h is None or w is None:
-            h = w = 1.0  # fallback to keep pipeline moving
+            raise OneClickError(
+                "Missing duct geometry in preset: require duct_area_m2 or (duct_height_m & duct_width_m)."
+            )
 
         cfg = RunConfig(height_m=float(h), width_m=float(w), weights=geom_dict.get("weights"))
 
@@ -260,9 +263,11 @@ class Orchestrator:
 
         r = r_ratio(geom)
         if r is None:
-            note = "map: geometry missing port area ratio; skipping mapping"
-            self.summary["warnings"].append(note)
-            self._placeholder(heatmap_path, note)
+            msg = "map: missing r = As/At; add duct_area_m2 and throat_area_m2 (or dims) to the site preset"
+            if self.strict:
+                raise OneClickError(msg)
+            self.summary["warnings"].append(msg)
+            self._placeholder(heatmap_path, msg)
             self._pairs = pairs
             return
 
@@ -416,7 +421,6 @@ class Orchestrator:
     def report(self, base_dir: Path) -> None:  # pragma: no cover - placeholder
         """Emit consolidated HTML/PDF reports."""
         from .legacy_results import ResultsConfig
-        import math
 
         outdir = base_dir / "_report"
         outdir.mkdir(parents=True, exist_ok=True)
@@ -437,12 +441,18 @@ class Orchestrator:
         geom = self.run.site.geometry or {}
         h = geom.get("duct_height_m")
         w = geom.get("duct_width_m")
+        A = geom.get("duct_area_m2")
+        if A is not None:
+            if (h is not None) ^ (w is not None):
+                raise OneClickError(
+                    "Provide both duct_height_m and duct_width_m or a single duct_area_m2, not a mix."
+                )
+            s = float(A) ** 0.5
+            h, w = s, s
         if h is None or w is None:
-            d = geom.get("duct_diameter_m")
-            if d:
-                A = math.pi * (float(d) ** 2) / 4.0
-                s = math.sqrt(A)
-                h = w = s
+            raise OneClickError(
+                "Missing duct geometry in preset: require duct_area_m2 or (duct_height_m & duct_width_m)."
+            )
 
         cfg = ResultsConfig(duct_height_m=h, duct_width_m=w)
         try:
@@ -608,6 +618,8 @@ class Orchestrator:
             "baro_override_Pa": self.run.baro_override_Pa,
             "venturi_r": venturi.get("r"),
             "venturi_beta": venturi.get("beta"),
+            "venturi_area_ratio": venturi.get("r"),           # r = As/At
+            "venturi_mapping": "qt = r^2 * qs; dp = (1 - beta^4) * qt",
         })
         skipped = getattr(self, "_skipped", [])
         if skipped:
