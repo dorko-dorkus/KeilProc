@@ -92,6 +92,14 @@ class App(tk.Tk):
         self.duct_h = ttk.Entry(site, width=10)
         self.duct_h.grid(column=1, row=srow, sticky="w", padx=6)
         srow += 1
+        ttk.Label(site, text="Throat area At (m², optional)").grid(column=0, row=srow, sticky="w")
+        self.throat_area = ttk.Entry(site, width=12)
+        self.throat_area.grid(column=1, row=srow, sticky="w", padx=6)
+        srow += 1
+        ttk.Label(site, text="β (venturi ratio, optional)").grid(column=0, row=srow, sticky="w")
+        self.beta_entry = ttk.Entry(site, width=12)
+        self.beta_entry.grid(column=1, row=srow, sticky="w", padx=6)
+        srow += 1
 
         ttk.Label(site, text="Piccolo present").grid(column=0, row=srow, sticky="w")
         self.piccolo = ttk.Combobox(site, values=["no", "yes"], width=6, state="readonly")
@@ -109,6 +117,27 @@ class App(tk.Tk):
         srow += 1
 
         self._toggle_site()  # start collapsed
+
+        # Transmitter setpoints (optional) ---------------------------
+        ttk.Separator(frm, orient="horizontal").grid(column=0, row=row, columnspan=3, sticky="ew", pady=6)
+        row += 1
+        ttk.Label(frm, text="Logger CSV (dp & temperature)").grid(column=0, row=row, sticky="w")
+        self.sp_csv = ttk.Entry(frm, width=40)
+        self.sp_csv.grid(column=1, row=row, sticky="w", padx=6)
+        ttk.Button(frm, text="Browse…", command=lambda: self._browse_file(self.sp_csv)).grid(column=2, row=row, sticky="w")
+        row += 1
+        ttk.Label(frm, text="dp column name (default: i/p)").grid(column=0, row=row, sticky="w")
+        self.sp_x = ttk.Entry(frm, width=20); self.sp_x.insert(0, "i/p")
+        self.sp_x.grid(column=1, row=row, sticky="w", padx=6); row += 1
+        ttk.Label(frm, text="Temperature column (default: 820)").grid(column=0, row=row, sticky="w")
+        self.sp_y = ttk.Entry(frm, width=20); self.sp_y.insert(0, "820")
+        self.sp_y.grid(column=1, row=row, sticky="w", padx=6); row += 1
+        ttk.Label(frm, text="Min fraction of span at p95 (0.60)").grid(column=0, row=row, sticky="w")
+        self.sp_min = ttk.Entry(frm, width=10); self.sp_min.insert(0, "0.6")
+        self.sp_min.grid(column=1, row=row, sticky="w", padx=6); row += 1
+        ttk.Label(frm, text="Slope sign (+1 or -1)").grid(column=0, row=row, sticky="w")
+        self.sp_sign = ttk.Entry(frm, width=10); self.sp_sign.insert(0, "+1")
+        self.sp_sign.grid(column=1, row=row, sticky="w", padx=6); row += 1
 
         # Run button and status ---------------------------------------
         self.run_btn = ttk.Button(frm, text="Run", command=self._on_run)
@@ -134,6 +163,12 @@ class App(tk.Tk):
         if d:
             self.out_dir.delete(0, tk.END)
             self.out_dir.insert(0, d)
+
+    def _browse_file(self, entry: ttk.Entry):
+        f = filedialog.askopenfilename()
+        if f:
+            entry.delete(0, tk.END)
+            entry.insert(0, f)
 
     def _toggle_site(self):
         state = "normal" if self.enable_site.get() else "disabled"
@@ -183,6 +218,10 @@ class App(tk.Tk):
                 geom["duct_width_m"] = float(self.duct_w.get().strip())
             if self.duct_h.get().strip():
                 geom["duct_height_m"] = float(self.duct_h.get().strip())
+            if self.throat_area.get().strip():
+                geom["throat_area_m2"] = float(self.throat_area.get().strip())
+            if self.beta_entry.get().strip():
+                geom["beta"] = float(self.beta_entry.get().strip())
             instr = {"vp_unit": self.site_vp.get(), "temp_unit": self.site_temp.get()}
             defs = {"fallback_baro_Pa": baro}
             cfg.site = SitePreset(
@@ -191,6 +230,19 @@ class App(tk.Tk):
                 instruments=instr,
                 defaults=defs,
             )
+            # Optional transmitter block
+            if self.sp_csv.get().strip():
+                cfg.setpoints_csv = self.sp_csv.get().strip()
+                cfg.setpoints_x_col = (self.sp_x.get().strip() or "i/p")
+                cfg.setpoints_y_col = (self.sp_y.get().strip() or "820")
+                try:
+                    cfg.setpoints_min_frac = float(self.sp_min.get().strip() or "0.6")
+                except Exception:
+                    cfg.setpoints_min_frac = 0.6
+                try:
+                    cfg.setpoints_slope_sign = int(self.sp_sign.get().strip() or "+1")
+                except Exception:
+                    cfg.setpoints_slope_sign = +1
 
         self.run_btn.configure(state="disabled")
         self.status.configure(text="Running…")
