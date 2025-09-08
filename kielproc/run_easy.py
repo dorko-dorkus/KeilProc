@@ -1,21 +1,15 @@
-"""Minimal one-button pipeline orchestrator for GUI use.
+"""One-click GUI pipeline orchestrator (integrate → SoT → transmitter)."""
 
-This module intentionally avoids any command-line coupling.  The GUI
-constructs a :class:`RunConfig` instance and passes it to :func:`run_all` which
-sequences the core processing stages:
-
-``parse -> integrate -> map -> fit -> translate``.
-
-Each stage is represented by a function imported from elsewhere in the project
-and can be monkeypatched in tests.  If a stage raises an exception the caller is
-expected to handle it; this module performs only light validation.
-"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
-import logging
+from pathlib import Path
+from typing import Dict, Any, Optional, Tuple
+import logging, json, math
+from .aggregate import RunConfig as IntegratorConfig, integrate_run
+from .geometry import Geometry, r_ratio, beta_from_geometry, duct_area
+from .transmitter import compute_and_write_setpoints, TxParams
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +51,12 @@ class RunConfig:
     temp_unit: str = "C"
     enable_site: bool = False
     site: Optional[SitePreset] = None
+    # Optional transmitter inputs (map to your logger CSV)
+    setpoints_csv: Optional[str] = None
+    setpoints_x_col: str = "i/p"   # dp column name
+    setpoints_y_col: str = "820"   # temperature column name
+    setpoints_min_frac: float = 0.6
+    setpoints_slope_sign: int = +1
 
 
 def _resolve_site(cfg: RunConfig) -> SitePreset:
@@ -88,42 +88,37 @@ def _resolve_baro(cfg: RunConfig) -> float:
         return 101_325.0
 
 
-# ---------------------------------------------------------------------------
-# Placeholder stage functions
-# ---------------------------------------------------------------------------
-
-def parse(input_dir: str, *, file_glob: str = "*"):
-    """Parse raw input data.
-
-    The real implementation lives elsewhere; this placeholder allows tests to
-    monkeypatch the function without pulling in heavy dependencies.
-    """
-
-    raise NotImplementedError
-
-
-def integrate(parsed, *, vp_unit: str = "Pa", temp_unit: str = "C"):
-    """Integrate parsed data into duct aggregates."""
-
-    raise NotImplementedError
-
-
-def map_ports(integrated):
-    """Map integrated results to velocities/pressures."""
-
-    raise NotImplementedError
-
-
-def fit(mapped, *, baro_pa: float):
-    """Fit calibration models."""
-
-    raise NotImplementedError
-
-
-def translate(fitres, *, output_dir: str):
-    """Translate fitted results into reports/tables."""
-
-    raise NotImplementedError
+def _resolve_geometry(site: SitePreset) -> Tuple[Optional[Geometry], Optional[float], Optional[float], Optional[Tuple[float,float]]]:
+    """Return (Geometry, r, beta, (H,W) for integrator) from whatever the site provided."""
+    if not site or not site.geometry:
+        return None, None, None, None
+    g = site.geometry
+    # compute As (duct area) from width/height/area, prefer explicit dims
+    H = float(g["duct_height_m"]) if "duct_height_m" in g else None
+    W = float(g["duct_width_m"])  if "duct_width_m"  in g else None
+    As = None
+    if H and W:
+        As = H * W
+    elif "duct_area_m2" in g:
+        As = float(g["duct_area_m2"])
+    # throat area
+    At = None
+    if "throat_area_m2" in g:
+        At = float(g["throat_area_m2"])
+    # beta direct or from areas
+    beta = float(g["beta"]) if "beta" in g else None
+    if (beta is None) and (As is not None) and (At is not None) and At > 0:
+        beta = math.sqrt(At/As)  # β = sqrt(At/A1) for noncircular
+    # r = As/At when both known
+    r = (As/At) if (As and At and At > 0) else None
+    # Build Geometry if we have any duct info (As or H/W)
+    geom = Geometry(
+        duct_width_m=W, duct_height_m=H, duct_area_m2=(As if (As and not (H and W)) else None),
+        throat_area_m2=At,
+    ) if (As or (H and W)) else None
+    # For integrator: prefer real H,W; else use (1, As) so A = H*W = As
+    dims = (H, W) if (H and W) else ((1.0, As) if As else None)
+    return geom, r, beta, dims
 
 
 # ---------------------------------------------------------------------------
@@ -131,43 +126,58 @@ def translate(fitres, *, output_dir: str):
 # ---------------------------------------------------------------------------
 
 def run_all(cfg: RunConfig) -> Dict[str, Any]:
-    """Run the full pipeline described by ``cfg``.
-
-    Parameters
-    ----------
-    cfg:
-        Configuration describing all user-supplied inputs.  The function makes
-        a best effort to continue even if optional pieces (such as a site
-        preset or barometric pressure) are missing or invalid.
-
-    Returns
-    -------
-    dict
-        Mapping of stage names to their respective results along with metadata
-        such as the sanitized barometric pressure and chosen site name.
-    """
-
-    logger.info(
-        "Run start: input=%s output=%s glob=%s", cfg.input_dir, cfg.output_dir, cfg.file_glob
-    )
+    """Execute integration and transmitter setpoints; write SoT artifacts."""
+    logger.info("Run start: input=%s output=%s glob=%s", cfg.input_dir, cfg.output_dir, cfg.file_glob)
     site = _resolve_site(cfg)
     baro_pa = _resolve_baro(cfg)
-    logger.info("Site: %s  Baro (Pa): %.1f", site.name, baro_pa)
-
-    parsed = parse(cfg.input_dir, file_glob=cfg.file_glob)
-    integrated = integrate(parsed, vp_unit=cfg.vp_unit, temp_unit=cfg.temp_unit)
-    mapped = map_ports(integrated)
-    fitres = fit(mapped, baro_pa=baro_pa)
-    report = translate(fitres, output_dir=cfg.output_dir)
-    return {
-        "parsed": parsed,
-        "integrated": integrated,
-        "mapped": mapped,
-        "fit": fitres,
-        "report": report,
+    geom, r, beta, dims = _resolve_geometry(site)
+    if dims is None:
+        raise ValueError("Geometry required: provide duct width+height or duct area.")
+    H, W = dims
+    int_cfg = IntegratorConfig(height_m=float(H), width_m=float(W))
+    res = integrate_run(
+        Path(cfg.input_dir),
+        int_cfg,
+        file_glob=cfg.file_glob,
+        baro_cli_pa=baro_pa,
+        area_ratio=r,
+        beta=beta,
+    )
+    outdir = Path(cfg.output_dir) / "_integrated"
+    outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / "per_port.csv").write_text(res["per_port"].to_csv(index=False))
+    (outdir / "duct_result.json").write_text(json.dumps(res.get("duct", {}), indent=2))
+    (outdir / "normalize_meta.json").write_text(json.dumps(res.get("normalize_meta", {}), indent=2))
+    # Optional transmitter setpoints
+    sp_csv = cfg.setpoints_csv or (site.defaults.get("setpoints_csv") if site and site.defaults else None)
+    if sp_csv:
+        try:
+            sp = compute_and_write_setpoints(
+                Path(sp_csv),
+                out_json=outdir / "transmitter_setpoints.json",
+                out_csv=outdir / "transmitter_setpoints.csv",
+                dp_col=(cfg.setpoints_x_col or "i/p"),
+                T_col=(cfg.setpoints_y_col or "820"),
+                min_fraction=float(cfg.setpoints_min_frac or 0.6),
+                quantile=0.95,
+                params=TxParams(),
+            )
+        except Exception as e:
+            sp = {"error": str(e)}
+    else:
+        sp = {}
+    summary = {
         "baro_pa": baro_pa,
         "site_name": site.name,
+        "r": r,
+        "beta": beta,
+        "per_port_csv": str(outdir / "per_port.csv"),
+        "duct_result_json": str(outdir / "duct_result.json"),
+        "normalize_meta_json": str(outdir / "normalize_meta.json"),
+        "setpoints": sp,
     }
+    (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
+    return summary
 
 
 __all__ = ["SitePreset", "RunConfig", "run_all"]
