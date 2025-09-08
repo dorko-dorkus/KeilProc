@@ -88,10 +88,10 @@ def _resolve_baro(cfg: RunConfig) -> float:
         return 101_325.0
 
 
-def _resolve_geometry(site: SitePreset) -> Tuple[Optional[Geometry], Optional[float], Optional[float], Optional[Tuple[float,float]]]:
-    """Return (Geometry, r, beta, (H,W) for integrator) from whatever the site provided."""
+def _resolve_geometry(site: SitePreset) -> Tuple[Optional[Geometry], Optional[float], Optional[float], Optional[Tuple[float,float]], Optional[float], Optional[float]]:
+    """Return (Geometry, r, beta, (H,W) for integrator, As, At) from site inputs."""
     if not site or not site.geometry:
-        return None, None, None, None
+        return None, None, None, None, None, None
     g = site.geometry
     # compute As (duct area) from width/height/area, prefer explicit dims
     H = float(g["duct_height_m"]) if "duct_height_m" in g else None
@@ -108,7 +108,9 @@ def _resolve_geometry(site: SitePreset) -> Tuple[Optional[Geometry], Optional[fl
     # beta direct or from areas
     beta = float(g["beta"]) if "beta" in g else None
     if (beta is None) and (As is not None) and (At is not None) and At > 0:
-        beta = math.sqrt(At/As)  # β = sqrt(At/A1) for noncircular
+        beta = math.sqrt(At/As)  # β = sqrt(At/A1)
+    if (At is None) and (beta is not None) and (As is not None):
+        At = beta*beta*As
     # r = As/At when both known
     r = (As/At) if (As and At and At > 0) else None
     # Build Geometry if we have any duct info (As or H/W)
@@ -118,7 +120,7 @@ def _resolve_geometry(site: SitePreset) -> Tuple[Optional[Geometry], Optional[fl
     ) if (As or (H and W)) else None
     # For integrator: prefer real H,W; else use (1, As) so A = H*W = As
     dims = (H, W) if (H and W) else ((1.0, As) if As else None)
-    return geom, r, beta, dims
+    return geom, r, beta, dims, As, At
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +132,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     logger.info("Run start: input=%s output=%s glob=%s", cfg.input_dir, cfg.output_dir, cfg.file_glob)
     site = _resolve_site(cfg)
     baro_pa = _resolve_baro(cfg)
-    geom, r, beta, dims = _resolve_geometry(site)
+    geom, r, beta, dims, As, At = _resolve_geometry(site)
     if dims is None:
         raise ValueError("Geometry required: provide duct width+height or duct area.")
     H, W = dims
@@ -148,6 +150,61 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     (outdir / "per_port.csv").write_text(res["per_port"].to_csv(index=False))
     (outdir / "duct_result.json").write_text(json.dumps(res.get("duct", {}), indent=2))
     (outdir / "normalize_meta.json").write_text(json.dumps(res.get("normalize_meta", {}), indent=2))
+
+    # ---------------------- Venturi mapping (optional) -----------------------
+    venturi = {}
+    try:
+        if (As is not None) and (At is not None) and (beta is not None) and (r is not None) and (r > 1.0):
+            duct = res.get("duct", {}) or {}
+            # Try to recover Qs (verification-plane volumetric flow, m^3/s)
+            Qs_candidates = [
+                duct.get("Qs_m3s"), duct.get("q_s_m3s"),
+                duct.get("Q_m3s"), duct.get("q_m3s"),
+                duct.get("volumetric_m3s"),
+            ]
+            Qs = next((x for x in Qs_candidates if isinstance(x, (int, float))), None)
+            # Fallback from mass flow if present
+            rho = duct.get("rho_kg_m3")
+            T_C = duct.get("temp_C_mean")
+            if rho is None:
+                # Ideal gas fallback for air: rho = P / (R T)
+                R = 287.05  # J/kg/K
+                T_K = (float(T_C) + 273.15) if isinstance(T_C, (int, float)) else 293.15
+                rho = float(cfg.baro_pa or 101325.0) / (R * T_K)
+            if Qs is None and isinstance(duct.get("m_dot_kg_s"), (int, float)) and rho:
+                Qs = float(duct["m_dot_kg_s"]) / float(rho)
+
+            if isinstance(Qs, (int, float)) and Qs > 0:
+                # Venturi Δp using standard equation (low Mach), with an optional Cd
+                Cd = 0.98
+                if site and site.defaults and isinstance(site.defaults.get("venturi_Cd"), (int, float)):
+                    Cd = float(site.defaults["venturi_Cd"])
+                # Δp = (Q / (Cd*At))^2 * (ρ/2) * (1 - β^4)
+                dp_vent = (Qs / (Cd * At)) ** 2 * (rho / 2.0) * (1.0 - beta ** 4)
+                vt = Qs / At
+                # Build a small curve across the normalized flow range (10%..100%)
+                curve = []
+                for frac in [x/10 for x in range(1, 11)]:  # 0.1..1.0
+                    Q = Qs * frac
+                    dp = (Q / (Cd * At)) ** 2 * (rho / 2.0) * (1.0 - beta ** 4)
+                    curve.append({"frac_of_Qs": frac, "Q_m3s": Q, "dp_vent_Pa": dp})
+                venturi = {
+                    "As_m2": As, "At_m2": At, "beta": beta, "r": r,
+                    "rho_kg_m3": rho, "Qs_m3s": Qs, "vt_m_s": vt,
+                    "Cd": Cd, "dp_vent_Pa_at_Qs": dp_vent, "curve": curve,
+                }
+                (outdir / "venturi_result.json").write_text(json.dumps(venturi, indent=2))
+                # Write curve CSV for quick plotting
+                try:
+                    import csv
+                    with (outdir / "venturi_curve.csv").open("w", newline="") as f:
+                        w = csv.DictWriter(f, fieldnames=["frac_of_Qs","Q_m3s","dp_vent_Pa"])
+                        w.writeheader()
+                        w.writerows(curve)
+                except Exception:
+                    pass
+    except Exception as e:
+        venturi = {"error": str(e)}
     # Optional transmitter setpoints
     sp_csv = cfg.setpoints_csv or (site.defaults.get("setpoints_csv") if site and site.defaults else None)
     if sp_csv:
@@ -175,6 +232,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "duct_result_json": str(outdir / "duct_result.json"),
         "normalize_meta_json": str(outdir / "normalize_meta.json"),
         "setpoints": sp,
+        "venturi_result_json": (str(outdir / "venturi_result.json") if venturi else None),
     }
     (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
     return summary
