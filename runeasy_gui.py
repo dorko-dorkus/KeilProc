@@ -100,6 +100,10 @@ class App(tk.Tk):
         self.beta_entry = ttk.Entry(site, width=12)
         self.beta_entry.grid(column=1, row=srow, sticky="w", padx=6)
         srow += 1
+        ttk.Label(site, text="Venturi Cd (optional, default 0.98)").grid(column=0, row=srow, sticky="w")
+        self.cd_entry = ttk.Entry(site, width=12)
+        self.cd_entry.grid(column=1, row=srow, sticky="w", padx=6)
+        srow += 1
 
         ttk.Label(site, text="Piccolo present").grid(column=0, row=srow, sticky="w")
         self.piccolo = ttk.Combobox(site, values=["no", "yes"], width=6, state="readonly")
@@ -230,6 +234,11 @@ class App(tk.Tk):
                 instruments=instr,
                 defaults=defs,
             )
+            if self.cd_entry.get().strip():
+                try:
+                    cfg.site.defaults["venturi_Cd"] = float(self.cd_entry.get().strip())
+                except Exception:
+                    pass
             # Optional transmitter block
             if self.sp_csv.get().strip():
                 cfg.setpoints_csv = self.sp_csv.get().strip()
