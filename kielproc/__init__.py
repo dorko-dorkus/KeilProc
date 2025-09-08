@@ -25,6 +25,14 @@ from .geometry import (
 )
 from .legacy_results import ResultsConfig, compute_results as compute_legacy_results
 from .run_easy import SitePreset, RunConfig as RunEasyConfig, run_all
+from .transmitter import (
+    TxParams,
+    uic_percent,
+    y820_output,
+    derive_urv,
+    make_setpoint_table,
+    compute_and_write_setpoints,
+)
 
 __all__ = [
     "__version__",
@@ -40,4 +48,6 @@ __all__ = [
     "RunConfig", "integrate_run", "discover_pairs",
     "ResultsConfig", "compute_legacy_results",
     "SitePreset", "RunEasyConfig", "run_all",
+    "TxParams", "uic_percent", "y820_output", "derive_urv",
+    "make_setpoint_table", "compute_and_write_setpoints",
 ]
