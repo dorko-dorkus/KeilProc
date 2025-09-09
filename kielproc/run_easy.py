@@ -10,6 +10,7 @@ import logging, json, math
 from .aggregate import RunConfig as IntegratorConfig, integrate_run
 from .geometry import Geometry, r_ratio, beta_from_geometry, duct_area
 from .transmitter import compute_and_write_setpoints, TxParams
+from .transmitter_flow import compute_and_write_flow_lookup
 from .tools.legacy_parser import parse_legacy_workbook
 
 logger = logging.getLogger(__name__)
@@ -52,12 +53,18 @@ class RunConfig:
     temp_unit: str = "C"
     enable_site: bool = False
     site: Optional[SitePreset] = None
-    # Optional transmitter inputs (map to your logger CSV)
+    # Optional transmitter/setpoints inputs (dp/T column names map to your logger CSV)
     setpoints_csv: Optional[str] = None
-    setpoints_x_col: str = "i/p"   # dp column name
-    setpoints_y_col: str = "820"   # temperature column name
+    setpoints_x_col: str = "DP_mbar"   # dp column in your CSV (FIXED: no "820" here)
+    setpoints_y_col: str = "T_C"       # temperature column in your CSV
     setpoints_min_frac: float = 0.6
     setpoints_slope_sign: int = +1
+    # Flow lookup calibration (optional)
+    dp_unit: str = "mbar"               # "mbar" | "Pa" | "kPa"
+    uic_K_th_per_sqrt_mbar: Optional[float] = None
+    lin820_slope_th_per_mbar: Optional[float] = None
+    lin820_intercept_th: Optional[float] = None
+    calib_workbook_xlsx: Optional[str] = None
 
 
 def _resolve_site(cfg: RunConfig) -> SitePreset:
@@ -236,8 +243,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 Path(sp_csv),
                 out_json=outdir / "transmitter_setpoints.json",
                 out_csv=outdir / "transmitter_setpoints.csv",
-                dp_col=(cfg.setpoints_x_col or "i/p"),
-                T_col=(cfg.setpoints_y_col or "820"),
+                dp_col=(cfg.setpoints_x_col or "DP_mbar"),
+                T_col=(cfg.setpoints_y_col or "T_C"),
                 min_fraction=float(cfg.setpoints_min_frac or 0.6),
                 quantile=0.95,
                 params=TxParams(),
@@ -246,6 +253,26 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
             sp = {"error": str(e)}
     else:
         sp = {}
+
+    # ---------------------- Flow lookup (UIC vs 820) -------------------------
+    flow_lookup = {}
+    if sp_csv:
+        try:
+            flow_lookup = compute_and_write_flow_lookup(
+                Path(sp_csv),
+                out_json=outdir / "transmitter_flow_lookup.json",
+                out_csv=outdir / "transmitter_flow_lookup.csv",
+                dp_col=(cfg.setpoints_x_col or "DP_mbar"),
+                T_col=(cfg.setpoints_y_col or "T_C"),
+                dp_unit=(cfg.dp_unit or "mbar"),
+                K_uic=cfg.uic_K_th_per_sqrt_mbar,
+                m_820=cfg.lin820_slope_th_per_mbar,
+                c_820=cfg.lin820_intercept_th,
+                calib_workbook=(Path(cfg.calib_workbook_xlsx) if cfg.calib_workbook_xlsx else None),
+            )
+        except Exception as e:
+            flow_lookup = {"error": str(e)}
+
     summary = {
         "baro_pa": baro_pa,
         "site_name": site.name,
@@ -257,6 +284,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "duct_result_json": str(outdir / "duct_result.json"),
         "normalize_meta_json": str(outdir / "normalize_meta.json"),
         "setpoints": sp,
+        "flow_lookup": flow_lookup,
         "venturi_result_json": (str(outdir / "venturi_result.json") if venturi else None),
     }
     (outdir / "summary.json").write_text(json.dumps(summary, indent=2))

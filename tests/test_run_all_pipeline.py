@@ -20,9 +20,9 @@ def test_run_all_produces_outputs(tmp_path):
         }
     ).to_csv(in_dir / "run__P1.csv", index=False)
 
-    # Logger CSV for transmitter setpoints
+    # Logger CSV for transmitter setpoints and flow lookup
     sp_csv = tmp_path / "setpoints.csv"
-    pd.DataFrame({"i/p": [10, 20], "820": [25, 30]}).to_csv(sp_csv, index=False)
+    pd.DataFrame({"DP_mbar": [10, 20], "T_C": [25, 30]}).to_csv(sp_csv, index=False)
 
     cfg = RunConfig(
         input_dir=str(in_dir),
@@ -45,6 +45,10 @@ def test_run_all_produces_outputs(tmp_path):
     tp = out_dir / "_integrated" / "transmitter_setpoints.csv"
     assert tp.exists()
     assert summary["setpoints"]["rows"] == 2
+    # Flow lookup artifacts
+    fl = out_dir / "_integrated" / "transmitter_flow_lookup.csv"
+    assert fl.exists()
+    assert summary["flow_lookup"]["rows"] == 2
     assert summary["baro_pa"] == 101_325.0
     assert summary["site_name"] == "SiteA"
     # Venturi result files present and sane
