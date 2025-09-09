@@ -251,18 +251,19 @@ class App(tk.Tk):
                     cfg.site.defaults["venturi_Cd"] = float(self.cd_entry.get().strip())
                 except Exception:
                     pass
-            # Season + optional CSV
-            cfg.season = (self.season.get().strip() or "summer")
-            if self.sp_csv.get().strip():
-                cfg.setpoints_csv = self.sp_csv.get().strip()
-                try:
-                    cfg.setpoints_min_frac = float(self.sp_min.get().strip() or "0.6")
-                except Exception:
-                    cfg.setpoints_min_frac = 0.6
-                try:
-                    cfg.setpoints_slope_sign = int(self.sp_sign.get().strip() or "+1")
-                except Exception:
-                    cfg.setpoints_slope_sign = +1
+
+        # Season + optional CSV overlay always available
+        cfg.season = (self.season.get().strip() or "summer")
+        if self.sp_csv.get().strip():
+            cfg.setpoints_csv = self.sp_csv.get().strip()
+            try:
+                cfg.setpoints_min_frac = float(self.sp_min.get().strip() or "0.6")
+            except Exception:
+                cfg.setpoints_min_frac = 0.6
+            try:
+                cfg.setpoints_slope_sign = int(self.sp_sign.get().strip() or "+1")
+            except Exception:
+                cfg.setpoints_slope_sign = +1
 
         self.run_btn.configure(state="disabled")
         self.status.configure(text="Running…")
