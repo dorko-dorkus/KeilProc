@@ -46,9 +46,13 @@ def test_run_all_produces_outputs(tmp_path):
     assert tp.exists()
     assert summary["setpoints"]["rows"] == 2
     # Flow lookup artifacts
-    fl = out_dir / "_integrated" / "transmitter_flow_lookup.csv"
-    assert fl.exists()
-    assert summary["flow_lookup"]["rows"] == 2
+    ref = out_dir / "_integrated" / "transmitter_lookup_reference.csv"
+    combined = out_dir / "_integrated" / "transmitter_lookup_combined.csv"
+    assert ref.exists()
+    assert combined.exists()
+    overlay = Path(summary["flow_lookup"]["overlay_csv"])
+    assert overlay.exists()
+    assert Path(summary["flow_lookup"]["combined_csv"]).exists()
     assert summary["baro_pa"] == 101_325.0
     assert summary["site_name"] == "SiteA"
     # Venturi result files present and sane
@@ -91,3 +95,7 @@ def test_run_all_accepts_workbook(tmp_path):
     assert prepared.exists()
     # per-port CSV generated from workbook and consumed
     assert Path(summary["per_port_csv"]).exists()
+    # Flow lookup reference generated even without logger CSV
+    meta = summary["flow_lookup"]
+    assert Path(meta["reference_csv"]).exists()
+    assert meta["overlay_csv"] is None
