@@ -143,20 +143,6 @@ class App(tk.Tk):
         self.season = ttk.Combobox(frm, values=["summer", "winter"], width=10)
         self.season.set("summer")
         self.season.grid(column=1, row=row, sticky="w", padx=6); row += 1
-        # (Advanced) Season calibration sources (optional)
-        self.adv = ttk.LabelFrame(frm, text="Advanced: calibration sources (optional)")
-        self.adv.grid(column=0, row=row, columnspan=3, sticky="ew", pady=6)
-        r2 = 0
-        ttk.Label(self.adv, text="Summer calib workbook (.xlsx)").grid(column=0, row=r2, sticky="w")
-        self.calib_xlsx_summer = ttk.Entry(self.adv, width=36)
-        self.calib_xlsx_summer.grid(column=1, row=r2, sticky="w", padx=6)
-        ttk.Button(self.adv, text="Browse…", command=lambda: self._browse_file(self.calib_xlsx_summer, filetypes=[('Excel','*.xlsx *.xlsm')])).grid(column=2, row=r2, sticky="w")
-        r2 += 1
-        ttk.Label(self.adv, text="Winter calib workbook (.xlsx)").grid(column=0, row=r2, sticky="w")
-        self.calib_xlsx_winter = ttk.Entry(self.adv, width=36)
-        self.calib_xlsx_winter.grid(column=1, row=r2, sticky="w", padx=6)
-        ttk.Button(self.adv, text="Browse…", command=lambda: self._browse_file(self.calib_xlsx_winter, filetypes=[('Excel','*.xlsx *.xlsm')])).grid(column=2, row=r2, sticky="w")
-        row += 1
         ttk.Label(frm, text="Min fraction of span at p95 (0.60)").grid(column=0, row=row, sticky="w")
         self.sp_min = ttk.Entry(frm, width=10); self.sp_min.insert(0, "0.6")
         self.sp_min.grid(column=1, row=row, sticky="w", padx=6); row += 1
@@ -277,11 +263,6 @@ class App(tk.Tk):
                     cfg.setpoints_slope_sign = int(self.sp_sign.get().strip() or "+1")
                 except Exception:
                     cfg.setpoints_slope_sign = +1
-            # Optional season workbooks
-            if self.calib_xlsx_summer.get().strip():
-                cfg.calib_workbook_summer = self.calib_xlsx_summer.get().strip()
-            if self.calib_xlsx_winter.get().strip():
-                cfg.calib_workbook_winter = self.calib_xlsx_winter.get().strip()
 
         self.run_btn.configure(state="disabled")
         self.status.configure(text="Running…")
