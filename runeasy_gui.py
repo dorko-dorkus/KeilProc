@@ -24,10 +24,19 @@ class App(tk.Tk):
 
         # Paths --------------------------------------------------------
         row = 0
-        ttk.Label(frm, text="Input folder").grid(column=0, row=row, sticky="w")
+        ttk.Label(frm, text="Input path (folder or .xlsx)").grid(column=0, row=row, sticky="w")
         self.in_dir = ttk.Entry(frm, width=70)
         self.in_dir.grid(column=1, row=row, sticky="ew", padx=6)
-        ttk.Button(frm, text="Browse…", command=self._pick_in).grid(column=2, row=row)
+        btns = ttk.Frame(frm)
+        btns.grid(column=2, row=row, sticky="w")
+        ttk.Button(btns, text="Folder…", command=self._pick_in).grid(column=0, row=0, padx=(0, 4))
+        ttk.Button(
+            btns,
+            text="Workbook…",
+            command=lambda: self._browse_file(
+                self.in_dir, filetypes=[("Excel", "*.xlsx *.xlsm *.xls")]
+            ),
+        ).grid(column=1, row=0)
         row += 1
 
         ttk.Label(frm, text="Output folder").grid(column=0, row=row, sticky="w")
@@ -168,8 +177,8 @@ class App(tk.Tk):
             self.out_dir.delete(0, tk.END)
             self.out_dir.insert(0, d)
 
-    def _browse_file(self, entry: ttk.Entry):
-        f = filedialog.askopenfilename()
+    def _browse_file(self, entry: ttk.Entry, **kwargs):
+        f = filedialog.askopenfilename(**kwargs)
         if f:
             entry.delete(0, tk.END)
             entry.insert(0, f)
@@ -187,10 +196,15 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------------ run
     def _on_run(self):
-        in_dir = self.in_dir.get().strip()
+        in_path = self.in_dir.get().strip()
         out_dir = self.out_dir.get().strip()
-        if not os.path.isdir(in_dir):
-            messagebox.showerror(APP_TITLE, "Input folder does not exist.")
+        valid_file = os.path.isfile(in_path) and in_path.lower().endswith(
+            (".xlsx", ".xlsm", ".xls")
+        )
+        if not (os.path.isdir(in_path) or valid_file):
+            messagebox.showerror(
+                APP_TITLE, "Input path must be a folder or .xlsx workbook."
+            )
             return
         if not os.path.isdir(out_dir):
             messagebox.showerror(APP_TITLE, "Output folder does not exist.")
@@ -206,7 +220,7 @@ class App(tk.Tk):
             return
 
         cfg = RunConfig(
-            input_dir=in_dir,
+            input_dir=in_path,
             output_dir=out_dir,
             file_glob=self.file_glob.get().strip() or "*__P[1-8].csv",
             baro_pa=baro,
