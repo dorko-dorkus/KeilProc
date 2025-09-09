@@ -10,7 +10,7 @@ import logging, json, math
 from .aggregate import RunConfig as IntegratorConfig, integrate_run
 from .geometry import Geometry, r_ratio, beta_from_geometry, duct_area
 from .transmitter import compute_and_write_setpoints, TxParams
-from .transmitter_flow import compute_and_write_flow_lookup
+from .transmitter_flow import write_lookup_outputs
 from .tools.legacy_parser import parse_legacy_workbook
 
 logger = logging.getLogger(__name__)
@@ -53,18 +53,16 @@ class RunConfig:
     temp_unit: str = "C"
     enable_site: bool = False
     site: Optional[SitePreset] = None
-    # Optional transmitter/setpoints inputs (dp/T column names map to your logger CSV)
+    # Logger CSV (optional; if provided we overlay data on the constant lookup)
     setpoints_csv: Optional[str] = None
-    setpoints_x_col: str = "DP_mbar"   # dp column in your CSV (FIXED: no "820" here)
-    setpoints_y_col: str = "T_C"       # temperature column in your CSV
     setpoints_min_frac: float = 0.6
     setpoints_slope_sign: int = +1
-    # Flow lookup calibration (optional)
-    dp_unit: str = "mbar"               # "mbar" | "Pa" | "kPa"
-    uic_K_th_per_sqrt_mbar: Optional[float] = None
-    lin820_slope_th_per_mbar: Optional[float] = None
-    lin820_intercept_th: Optional[float] = None
-    calib_workbook_xlsx: Optional[str] = None
+    # Season selector (sole user input for flow lookup)
+    season: str = "summer"              # "summer" | "winter"
+    # Optional site defaults: calib_820_summer / calib_820_winter or season workbooks
+    calib_workbook_summer: Optional[str] = None
+    calib_workbook_winter: Optional[str] = None
+    lookup_dp_max_mbar: float = 10.0
 
 
 def _resolve_site(cfg: RunConfig) -> SitePreset:
@@ -243,8 +241,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 Path(sp_csv),
                 out_json=outdir / "transmitter_setpoints.json",
                 out_csv=outdir / "transmitter_setpoints.csv",
-                dp_col=(cfg.setpoints_x_col or "DP_mbar"),
-                T_col=(cfg.setpoints_y_col or "T_C"),
+                dp_col="DP_mbar",
+                T_col="T_C",
                 min_fraction=float(cfg.setpoints_min_frac or 0.6),
                 quantile=0.95,
                 params=TxParams(),
@@ -254,24 +252,23 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     else:
         sp = {}
 
-    # ---------------------- Flow lookup (UIC vs 820) -------------------------
-    flow_lookup = {}
-    if sp_csv:
-        try:
-            flow_lookup = compute_and_write_flow_lookup(
-                Path(sp_csv),
-                out_json=outdir / "transmitter_flow_lookup.json",
-                out_csv=outdir / "transmitter_flow_lookup.csv",
-                dp_col=(cfg.setpoints_x_col or "DP_mbar"),
-                T_col=(cfg.setpoints_y_col or "T_C"),
-                dp_unit=(cfg.dp_unit or "mbar"),
-                K_uic=cfg.uic_K_th_per_sqrt_mbar,
-                m_820=cfg.lin820_slope_th_per_mbar,
-                c_820=cfg.lin820_intercept_th,
-                calib_workbook=(Path(cfg.calib_workbook_xlsx) if cfg.calib_workbook_xlsx else None),
-            )
-        except Exception as e:
-            flow_lookup = {"error": str(e)}
+    # ---------------------- Flow lookup (always) -----------------------------
+    try:
+        season_workbooks = {
+            "summer": cfg.calib_workbook_summer,
+            "winter": cfg.calib_workbook_winter,
+        }
+        flow_lookup = write_lookup_outputs(
+            outdir,
+            season=cfg.season,
+            site_defaults=(site.defaults or {}),
+            season_workbooks={k: v for k, v in season_workbooks.items() if v},
+            logger_csv=(Path(sp_csv) if sp_csv else None),
+            # dp_col/unit autodetect; constant reference up to lookup_dp_max_mbar
+            dp_max_mbar=float(cfg.lookup_dp_max_mbar or 10.0),
+        )
+    except Exception as e:
+        flow_lookup = {"error": str(e)}
 
     summary = {
         "baro_pa": baro_pa,
