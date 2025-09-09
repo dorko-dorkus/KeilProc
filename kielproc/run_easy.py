@@ -10,6 +10,7 @@ import logging, json, math
 from .aggregate import RunConfig as IntegratorConfig, integrate_run
 from .geometry import Geometry, r_ratio, beta_from_geometry, duct_area
 from .transmitter import compute_and_write_setpoints, TxParams
+from .tools.legacy_parser import parse_legacy_workbook
 
 logger = logging.getLogger(__name__)
 
@@ -137,8 +138,30 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         raise ValueError("Geometry required: provide duct width+height or duct area.")
     H, W = dims
     int_cfg = IntegratorConfig(height_m=float(H), width_m=float(W))
+
+    # ---------------------- Input prep: folder or workbook -------------------
+    in_path = Path(cfg.input_dir)
+    prepared_dir: Path
+    input_mode: str
+    if in_path.is_dir():
+        # Pre-formatted CSV folder
+        prepared_dir = in_path
+        input_mode = "csv_folder"
+    elif in_path.is_file() and in_path.suffix.lower() in (".xlsx", ".xlsm", ".xls"):
+        # Legacy workbook → stage to CSVs
+        prepared_dir = Path(cfg.output_dir) / "_staging_legacy"
+        prepared_dir.mkdir(parents=True, exist_ok=True)
+        # writes per-port CSVs + summary.json into prepared_dir
+        parse_legacy_workbook(in_path, out_dir=prepared_dir, return_mode="files")
+        input_mode = "legacy_workbook"
+    else:
+        raise FileNotFoundError(
+            f"Input path must be a folder of CSVs or an .xlsx workbook: {in_path}"
+        )
+
+    # ---------------------- Integrate on prepared_dir ------------------------
     res = integrate_run(
-        Path(cfg.input_dir),
+        prepared_dir,
         int_cfg,
         file_glob=cfg.file_glob,
         baro_cli_pa=baro_pa,
@@ -228,6 +251,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "site_name": site.name,
         "r": r,
         "beta": beta,
+        "input_mode": input_mode,
+        "prepared_input_dir": str(prepared_dir),
         "per_port_csv": str(outdir / "per_port.csv"),
         "duct_result_json": str(outdir / "duct_result.json"),
         "normalize_meta_json": str(outdir / "normalize_meta.json"),
