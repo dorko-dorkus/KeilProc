@@ -134,17 +134,37 @@ class App(tk.Tk):
         # Transmitter setpoints (optional) ---------------------------
         ttk.Separator(frm, orient="horizontal").grid(column=0, row=row, columnspan=3, sticky="ew", pady=6)
         row += 1
-        ttk.Label(frm, text="Logger CSV (dp & temperature)").grid(column=0, row=row, sticky="w")
+        ttk.Label(frm, text="Logger CSV for transmitter calc (optional)").grid(column=0, row=row, sticky="w")
         self.sp_csv = ttk.Entry(frm, width=40)
         self.sp_csv.grid(column=1, row=row, sticky="w", padx=6)
         ttk.Button(frm, text="Browse…", command=lambda: self._browse_file(self.sp_csv)).grid(column=2, row=row, sticky="w")
         row += 1
-        ttk.Label(frm, text="dp column name (default: i/p)").grid(column=0, row=row, sticky="w")
-        self.sp_x = ttk.Entry(frm, width=20); self.sp_x.insert(0, "i/p")
+        ttk.Label(frm, text="dp column name (default: DP_mbar)").grid(column=0, row=row, sticky="w")
+        self.sp_x = ttk.Entry(frm, width=20); self.sp_x.insert(0, "DP_mbar")
         self.sp_x.grid(column=1, row=row, sticky="w", padx=6); row += 1
-        ttk.Label(frm, text="Temperature column (default: 820)").grid(column=0, row=row, sticky="w")
-        self.sp_y = ttk.Entry(frm, width=20); self.sp_y.insert(0, "820")
+        ttk.Label(frm, text="Temperature column (default: T_C)").grid(column=0, row=row, sticky="w")
+        self.sp_y = ttk.Entry(frm, width=20); self.sp_y.insert(0, "T_C")
         self.sp_y.grid(column=1, row=row, sticky="w", padx=6); row += 1
+        ttk.Label(frm, text="DP unit").grid(column=0, row=row, sticky="w")
+        self.dp_unit = ttk.Combobox(frm, values=["mbar", "Pa", "kPa"], width=8)
+        self.dp_unit.set("mbar")
+        self.dp_unit.grid(column=1, row=row, sticky="w", padx=6); row += 1
+        ttk.Separator(frm, orient="horizontal").grid(column=0, row=row, columnspan=3, sticky="ew", pady=6); row += 1
+        ttk.Label(frm, text="Flow lookup calibration (optional)").grid(column=0, row=row, sticky="w"); row += 1
+        ttk.Label(frm, text="Calib workbook (.xlsx) to auto-fit K, m, c").grid(column=0, row=row, sticky="w")
+        self.calib_xlsx = ttk.Entry(frm, width=40)
+        self.calib_xlsx.grid(column=1, row=row, sticky="w", padx=6)
+        ttk.Button(frm, text="Browse…", command=lambda: self._browse_file(self.calib_xlsx, filetypes=[('Excel', '*.xlsx *.xlsm')])).grid(column=2, row=row, sticky="w")
+        row += 1
+        ttk.Label(frm, text="UIC K (t/h per √mbar)").grid(column=0, row=row, sticky="w")
+        self.k_uic = ttk.Entry(frm, width=12)  # leave blank to use workbook or default
+        self.k_uic.grid(column=1, row=row, sticky="w", padx=6); row += 1
+        ttk.Label(frm, text="820 slope (t/h per mbar)").grid(column=0, row=row, sticky="w")
+        self.m_820 = ttk.Entry(frm, width=12)
+        self.m_820.grid(column=1, row=row, sticky="w", padx=6); row += 1
+        ttk.Label(frm, text="820 intercept (t/h)").grid(column=0, row=row, sticky="w")
+        self.c_820 = ttk.Entry(frm, width=12)
+        self.c_820.grid(column=1, row=row, sticky="w", padx=6); row += 1
         ttk.Label(frm, text="Min fraction of span at p95 (0.60)").grid(column=0, row=row, sticky="w")
         self.sp_min = ttk.Entry(frm, width=10); self.sp_min.insert(0, "0.6")
         self.sp_min.grid(column=1, row=row, sticky="w", padx=6); row += 1
@@ -256,8 +276,9 @@ class App(tk.Tk):
             # Optional transmitter block
             if self.sp_csv.get().strip():
                 cfg.setpoints_csv = self.sp_csv.get().strip()
-                cfg.setpoints_x_col = (self.sp_x.get().strip() or "i/p")
-                cfg.setpoints_y_col = (self.sp_y.get().strip() or "820")
+                cfg.setpoints_x_col = (self.sp_x.get().strip() or "DP_mbar")
+                cfg.setpoints_y_col = (self.sp_y.get().strip() or "T_C")
+                cfg.dp_unit = (self.dp_unit.get().strip() or "mbar")
                 try:
                     cfg.setpoints_min_frac = float(self.sp_min.get().strip() or "0.6")
                 except Exception:
@@ -266,6 +287,26 @@ class App(tk.Tk):
                     cfg.setpoints_slope_sign = int(self.sp_sign.get().strip() or "+1")
                 except Exception:
                     cfg.setpoints_slope_sign = +1
+                # flow lookup calibration params (optional)
+                cfg.calib_workbook_xlsx = (self.calib_xlsx.get().strip() or None)
+                try:
+                    cfg.uic_K_th_per_sqrt_mbar = (
+                        float(self.k_uic.get().strip()) if self.k_uic.get().strip() else None
+                    )
+                except Exception:
+                    cfg.uic_K_th_per_sqrt_mbar = None
+                try:
+                    cfg.lin820_slope_th_per_mbar = (
+                        float(self.m_820.get().strip()) if self.m_820.get().strip() else None
+                    )
+                except Exception:
+                    cfg.lin820_slope_th_per_mbar = None
+                try:
+                    cfg.lin820_intercept_th = (
+                        float(self.c_820.get().strip()) if self.c_820.get().strip() else None
+                    )
+                except Exception:
+                    cfg.lin820_intercept_th = None
 
         self.run_btn.configure(state="disabled")
         self.status.configure(text="Running…")

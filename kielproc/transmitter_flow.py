@@ -166,3 +166,72 @@ def write_lookup_outputs(
     }
     (outdir / "transmitter_lookup_meta.json").write_text(json.dumps(meta, indent=2))
     return meta
+
+
+# Backwards-compatible wrapper used by run_easy.py
+def compute_and_write_flow_lookup(
+    csv_in: Path,
+    out_json: Path,
+    out_csv: Path,
+    *,
+    dp_col: str,
+    T_col: str,
+    dp_unit: str = "mbar",
+    K_uic: Optional[float] = None,
+    m_820: Optional[float] = None,
+    c_820: Optional[float] = None,
+    calib_workbook: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Compute lookup table of UIC vs 820 flow and write csv/json.
+
+    This lightweight wrapper preserves the older ``compute_and_write_flow_lookup``
+    API expected by :mod:`run_easy`.  It converts the differential pressure to
+    mbar, applies calibration constants (from a workbook or explicit overrides),
+    and writes a CSV and JSON summary.  Returns metadata including the row
+    count so callers can report results.
+    """
+
+    df = pd.read_csv(csv_in)
+    if dp_col not in df:
+        raise ValueError(f"CSV must contain '{dp_col}' column")
+
+    # Base calibration from workbook or presets
+    season_workbooks = {"summer": str(calib_workbook)} if calib_workbook else None
+    cal = _calib_for_season("summer", season_workbooks=season_workbooks)
+    # Manual overrides
+    if K_uic is not None:
+        cal.K_uic = float(K_uic); cal.source = "manual"
+    if m_820 is not None:
+        cal.m_820 = float(m_820); cal.source = "manual"
+    if c_820 is not None:
+        cal.c_820 = float(c_820); cal.source = "manual"
+
+    dp_mbar = _to_mbar(df[dp_col], dp_unit)
+    flow_uic = cal.K_uic * np.sqrt(np.clip(dp_mbar.values, 0.0, None))
+    flow_820 = cal.m_820 * dp_mbar.values + cal.c_820
+    table = pd.DataFrame({
+        "DP_mbar": dp_mbar.values,
+        "Flow_UIC_tph": flow_uic,
+        "Flow_820_tph": flow_820,
+    })
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    table.to_csv(out_csv, index=False)
+    meta = {
+        "calibration": {
+            "K_uic": cal.K_uic,
+            "m_820": cal.m_820,
+            "c_820": cal.c_820,
+            "source": cal.source,
+        },
+        "rows": int(table.shape[0]),
+        "inputs": {"csv": str(csv_in), "dp_col": dp_col, "dp_unit": dp_unit},
+        "outputs": {"csv": str(out_csv), "json": str(out_json)},
+    }
+    out_json.write_text(json.dumps(meta, indent=2))
+    return {"rows": int(table.shape[0]), "csv": str(out_csv), "json": str(out_json)}
+
+
+__all__ = [
+    "write_lookup_outputs",
+    "compute_and_write_flow_lookup",
+]
