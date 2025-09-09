@@ -5,18 +5,16 @@ from typing import Optional, Dict, Any, Tuple, List
 import json, math, re
 import numpy as np
 import pandas as pd
-import openpyxl
 
 # ---------- Season presets ----------
 # Source of truth for 820 linearization (flow = m*DP + c).
-# You can override these via site.defaults["calib_820_summer"] / ["calib_820_winter"]
-# or by providing season-specific calibration workbooks (see _calib_for_season()).
+# You can override these via site.defaults["calib_820_summer"] / ["calib_820_winter"].
 SEASON_PRESETS = {
-    "summer": {"m": 8.40, "c": 31.50},   # t/h per mbar, t/h  (example values)
-    "winter": {"m": 8.40, "c": 31.50},   # TODO: update when winter fit available
+    "summer": {"m": 8.40, "c": 31.50},   # t/h per mbar, t/h  ← set your final values
+    "winter": {"m": 8.40, "c": 31.50},   # ← set your final winter values
 }
 # UIC constant (Flow_UIC = K * sqrt(DP_mbar))
-K_UIC_DEFAULT = 33.50   # t/h per sqrt(mbar)  (example value from your workbook)
+K_UIC_DEFAULT = 33.50   # t/h per sqrt(mbar)  ← set your final K if needed
 
 @dataclass
 class SeasonCalib:
@@ -27,39 +25,15 @@ class SeasonCalib:
     source: str
 
 # ---------- Helpers ----------
-def _fit_from_workbook(xlsx_path: Path) -> Tuple[float, float, float]:
-    """Fit (K, m, c) from Sheet1 table: col2=DP_mbar, col3=UIC_flow, col4=820_flow."""
-    wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
-    ws = wb["Sheet1"]
-    dps: List[float] = []; uic: List[float] = []; lin: List[float] = []
-    for r in range(19, 500):
-        dp = ws.cell(row=r, column=2).value
-        f3 = ws.cell(row=r, column=3).value
-        f4 = ws.cell(row=r, column=4).value
-        if isinstance(dp, (int, float)) and isinstance(f3, (int, float)) and isinstance(f4, (int, float)) and dp >= 0:
-            dps.append(float(dp)); uic.append(float(f3)); lin.append(float(f4))
-    if not dps:
-        raise ValueError("No DP rows found in calibration workbook (Sheet1 col2..4).")
-    dps = np.array(dps); uic = np.array(uic); lin = np.array(lin)
-    K = np.median(uic[dps > 0] / np.sqrt(dps[dps > 0]))
-    A = np.vstack([dps, np.ones_like(dps)]).T
-    m, c = np.linalg.lstsq(A, lin, rcond=None)[0]
-    return float(K), float(m), float(c)
-
 def _calib_for_season(season: str,
-                      site_defaults: Optional[dict] = None,
-                      season_workbooks: Optional[dict] = None) -> SeasonCalib:
+                      site_defaults: Optional[dict] = None) -> SeasonCalib:
     s = (season or "summer").lower()
-    # 1) workbook override for this season
-    if season_workbooks and season_workbooks.get(s):
-        K, m, c = _fit_from_workbook(Path(season_workbooks[s]))
-        return SeasonCalib(s, K, m, c, source=f"workbook:{season_workbooks[s]}")
-    # 2) site.defaults override (explicit m/c/K)
+    # site.defaults override (explicit m/c/K) if you want deploy-time control
     if site_defaults:
         mck = site_defaults.get(f"calib_820_{s}")  # e.g., {"m": 8.4, "c": 31.5, "K_uic": 33.5}
         if isinstance(mck, dict) and "m" in mck and "c" in mck:
             return SeasonCalib(s, float(mck.get("K_uic", K_UIC_DEFAULT)), float(mck["m"]), float(mck["c"]), "site.defaults")
-    # 3) built-in presets
+    # built-in presets
     preset = SEASON_PRESETS.get(s, SEASON_PRESETS["summer"])
     return SeasonCalib(s, K_UIC_DEFAULT, float(preset["m"]), float(preset["c"]), "preset")
 
@@ -131,7 +105,6 @@ def write_lookup_outputs(
     *,
     season: str,
     site_defaults: Optional[dict] = None,
-    season_workbooks: Optional[dict] = None,   # {"summer": "/path.xlsx", "winter": "/path.xlsx"}
     logger_csv: Optional[Path] = None,
     dp_col: Optional[str] = None,
     dp_unit_hint: Optional[str] = None,
@@ -140,7 +113,7 @@ def write_lookup_outputs(
 ) -> Dict[str, Any]:
     """Always write the constant reference table; add data overlay if logger present."""
     outdir = Path(outdir); outdir.mkdir(parents=True, exist_ok=True)
-    cal = _calib_for_season(season, site_defaults=site_defaults, season_workbooks=season_workbooks)
+    cal = _calib_for_season(season, site_defaults=site_defaults)
     # reference side (constant)
     ref = build_reference_table(cal, dp_max_mbar=float(dp_max_mbar or 10.0), dp_step_mbar=dp_step_mbar)
     ref_csv = outdir / "transmitter_lookup_reference.csv"
@@ -180,13 +153,12 @@ def compute_and_write_flow_lookup(
     K_uic: Optional[float] = None,
     m_820: Optional[float] = None,
     c_820: Optional[float] = None,
-    calib_workbook: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Compute lookup table of UIC vs 820 flow and write csv/json.
 
     This lightweight wrapper preserves the older ``compute_and_write_flow_lookup``
     API expected by :mod:`run_easy`.  It converts the differential pressure to
-    mbar, applies calibration constants (from a workbook or explicit overrides),
+    mbar, applies calibration constants (from presets or explicit overrides),
     and writes a CSV and JSON summary.  Returns metadata including the row
     count so callers can report results.
     """
@@ -195,9 +167,8 @@ def compute_and_write_flow_lookup(
     if dp_col not in df:
         raise ValueError(f"CSV must contain '{dp_col}' column")
 
-    # Base calibration from workbook or presets
-    season_workbooks = {"summer": str(calib_workbook)} if calib_workbook else None
-    cal = _calib_for_season("summer", season_workbooks=season_workbooks)
+    # Base calibration from presets
+    cal = _calib_for_season("summer")
     # Manual overrides
     if K_uic is not None:
         cal.K_uic = float(K_uic); cal.source = "manual"

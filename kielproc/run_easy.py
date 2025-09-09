@@ -59,9 +59,7 @@ class RunConfig:
     setpoints_slope_sign: int = +1
     # Season selector (sole user input for flow lookup)
     season: str = "summer"              # "summer" | "winter"
-    # Optional site defaults: calib_820_summer / calib_820_winter or season workbooks
-    calib_workbook_summer: Optional[str] = None
-    calib_workbook_winter: Optional[str] = None
+    # Optional site defaults: calib_820_summer / calib_820_winter
     lookup_dp_max_mbar: float = 10.0
 
 
@@ -254,15 +252,10 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
 
     # ---------------------- Flow lookup (always) -----------------------------
     try:
-        season_workbooks = {
-            "summer": cfg.calib_workbook_summer,
-            "winter": cfg.calib_workbook_winter,
-        }
         flow_lookup = write_lookup_outputs(
             outdir,
             season=cfg.season,
             site_defaults=(site.defaults or {}),
-            season_workbooks={k: v for k, v in season_workbooks.items() if v},
             logger_csv=(Path(sp_csv) if sp_csv else None),
             # dp_col/unit autodetect; constant reference up to lookup_dp_max_mbar
             dp_max_mbar=float(cfg.lookup_dp_max_mbar or 10.0),
