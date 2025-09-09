@@ -40,6 +40,8 @@ def test_run_all_produces_outputs(tmp_path):
     # Basic sanity checks
     assert Path(summary["per_port_csv"]).exists()
     assert Path(summary["duct_result_json"]).exists()
+    assert summary["input_mode"] == "csv_folder"
+    assert Path(summary["prepared_input_dir"]) == in_dir
     tp = out_dir / "_integrated" / "transmitter_setpoints.csv"
     assert tp.exists()
     assert summary["setpoints"]["rows"] == 2
@@ -51,3 +53,37 @@ def test_run_all_produces_outputs(tmp_path):
     data = json.loads(vr.read_text())
     assert len(data["curve"]) == 10
     assert data["dp_vent_Pa_at_Qs"] > 0
+
+
+def test_run_all_accepts_workbook(tmp_path):
+    wb_path = tmp_path / "input.xlsx"
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    # Build workbook with blank unit row
+    cols = ["Time", "Static Pressure", "Velocity Pressure", "Temperature", "Piccolo"]
+    data = [[0, 101325, 10, 25, 0.1], [1, 101300, 12, 26, 0.2]]
+    pd.DataFrame(data, columns=cols).to_excel(wb_path, sheet_name="P1", index=False)
+    from openpyxl import load_workbook
+
+    wb = load_workbook(wb_path)
+    wb["P1"].insert_rows(2)
+    wb.save(wb_path)
+
+    cfg = RunConfig(
+        input_dir=str(wb_path),
+        output_dir=str(out_dir),
+        enable_site=True,
+        site=SitePreset(
+            name="SiteA",
+            geometry={"duct_width_m": 1.0, "duct_height_m": 1.0, "throat_area_m2": 0.25},
+        ),
+    )
+
+    summary = run_all(cfg)
+
+    assert summary["input_mode"] == "legacy_workbook"
+    prepared = Path(summary["prepared_input_dir"])
+    assert prepared.exists()
+    # per-port CSV generated from workbook and consumed
+    assert Path(summary["per_port_csv"]).exists()
