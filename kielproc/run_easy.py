@@ -65,7 +65,6 @@ class RunConfig:
     setpoints_slope_sign: int = +1
     # Season selector (sole user input for flow lookup)
     season: str = "summer"              # "summer" | "winter"
-    # Optional site defaults: calib_820_summer / calib_820_winter
     lookup_dp_max_mbar: float = 10.0
 
 
