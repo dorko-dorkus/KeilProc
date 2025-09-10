@@ -152,6 +152,67 @@ def _exec_summary(outdir: Path, summary_path: Path) -> plt.Figure:
         ])
     else:
         blocks.append(["Executive Summary", "─────────────────", "No summary available."])
+
+    # Overlay stats (from combined or overlay csv)
+    meta = _load_json(Path(outdir) / "transmitter_lookup_meta.json")
+    overlay_csv = meta.get("combined_csv") or meta.get("overlay_csv")
+    n = 0; dp_min = dp_max = None; mean_abs_err = worst_abs_err = 0.0
+    if overlay_csv and Path(overlay_csv).exists():
+        try:
+            df = pd.read_csv(Path(overlay_csv))
+            cand = None
+            for name in ["data_DP_mbar", "DP_mbar", "dp_mbar", "dp (mbar)", "dp", "i/p", "differential"]:
+                if name in df.columns:
+                    cand = name
+                    break
+            if cand is None:
+                for col in df.columns:
+                    sdp = pd.to_numeric(df[col], errors="coerce")
+                    if sdp.notna().sum() > 0:
+                        cand = col
+                        break
+            if cand:
+                dp_series = pd.to_numeric(df[cand], errors="coerce").dropna()
+                n = int(dp_series.size)
+                if n > 0:
+                    dp_min = float(dp_series.min()); dp_max = float(dp_series.max())
+                    if "data_Flow_err_820_minus_UIC_tph" in df.columns:
+                        err = pd.to_numeric(df["data_Flow_err_820_minus_UIC_tph"], errors="coerce")
+                    elif {"data_Flow_820_tph", "data_Flow_UIC_tph"}.issubset(df.columns):
+                        err = pd.to_numeric(df["data_Flow_820_tph"], errors="coerce") - pd.to_numeric(df["data_Flow_UIC_tph"], errors="coerce")
+                    elif {"Flow_820_tph", "Flow_UIC_tph"}.issubset(df.columns):
+                        err = pd.to_numeric(df["Flow_820_tph"], errors="coerce") - pd.to_numeric(df["Flow_UIC_tph"], errors="coerce")
+                    else:
+                        err = None
+                    if err is not None:
+                        mean_abs_err = float(np.nanmean(np.abs(err)))
+                        worst_abs_err = float(np.nanmax(np.abs(err)))
+        except Exception:
+            pass
+
+    if n > 0:
+        # Piccolo range/avg current (for implied-current check)
+        s_all = _load_json(summary_path)
+        pic = (s_all.get("piccolo_info") or {})
+        rng = pic.get("range_mbar", None)
+        avgI = pic.get("avg_current_mA", None)
+        impliedI = None
+        if rng and dp_min is not None and dp_max is not None and rng > 0:
+            I_lo = 4.0 + 16.0 * (dp_min / float(rng))
+            I_hi = 4.0 + 16.0 * (dp_max / float(rng))
+            impliedI = (I_lo, I_hi)
+        blocks.append([
+            "Overlay (Piccolo-derived DP):",
+            f"  Samples: n = {n}",
+            f"  DP band: {dp_min:.3f} – {dp_max:.3f} mbar",
+            f"  820 vs UIC error: mean |Δ| = {mean_abs_err:.3f} t/h, worst |Δ| = {worst_abs_err:.3f} t/h",
+        ])
+        line = []
+        if rng:   line.append(f"Range = {rng:.3f} mbar")
+        if avgI:  line.append(f"Avg I = {avgI:.4f} mA (workbook)")
+        if impliedI: line.append(f"Implied I from overlay = {impliedI[0]:.4f}–{impliedI[1]:.4f} mA")
+        if line: blocks.append(["Piccolo mapping: " + " | ".join(line)])
+
     return _fig_text_page("Executive Summary", blocks)
 
 
@@ -320,8 +381,22 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
     ax.scatter(dd["data_DP_mbar"], dd["data_Flow_820_tph"], s=20, alpha=0.85, label="820 – data", zorder=5)
     ax.set_xlim(lo, hi)
     ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
-    ax.set_title(f"Flow lookup — overlay zoom (n={len(dp)}, DP {dp_min:.3f}–{dp_max:.3f} mbar)")
+    # Title plus Piccolo current band if range is known
+    title = f"Flow lookup — overlay zoom (n={len(dp)}, DP {dp_min:.3f}–{dp_max:.3f} mbar)"
+    rng = I_lo = I_hi = None
+    try:
+        s_all = _load_json(Path(outdir) / "summary.json")
+        rng = (s_all.get("piccolo_info") or {}).get("range_mbar", None)
+        if rng and rng > 0:
+            I_lo = 4.0 + 16.0 * (dp_min / float(rng))
+            I_hi = 4.0 + 16.0 * (dp_max / float(rng))
+            title += f"\n(Piccolo range {rng:.3f} mbar → I {I_lo:.4f}–{I_hi:.4f} mA)"
+    except Exception:
+        pass
+    ax.set_title(title)
     ax.grid(True, linestyle="--", alpha=0.4); ax.legend()
+    if I_lo is not None and I_hi is not None:
+        fig.text(0.5, 0.03, f"Implied Piccolo I from overlay DP: {I_lo:.4f}–{I_hi:.4f} mA", ha="center", fontsize=10)
     return fig
 
 
