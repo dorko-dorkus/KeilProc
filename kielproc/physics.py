@@ -14,6 +14,24 @@ def rho_from_pT(ps_pa: np.ndarray, T_K: np.ndarray, R: float = R_SPECIFIC_AIR) -
         raise ValueError("Temperature at or below 0 K encountered")
     return ps_pa / (R * T_K)
 
+def rho_from_pT_scalar(ps_pa: float, T_K: float, R: float = R_SPECIFIC_AIR) -> float:
+    """Scalar variant of :func:`rho_from_pT`.
+
+    Parameters
+    ----------
+    ps_pa:
+        Static pressure in pascals.
+    T_K:
+        Temperature in kelvin (must be > 0).
+    R:
+        Specific gas constant for air. Defaults to :data:`R_SPECIFIC_AIR`.
+    """
+    ps = float(ps_pa)
+    T = float(T_K)
+    if T <= 0.0:
+        raise ValueError("Temperature at or below 0 K encountered")
+    return ps / (R * T)
+
 def map_qs_to_qt(qs: np.ndarray, r: float, rho_t_over_rho_s: float = 1.0) -> np.ndarray:
     """
     Map dynamic pressure measured at downstream section (area As) back to throat (At).
