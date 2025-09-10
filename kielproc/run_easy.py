@@ -11,6 +11,7 @@ from .aggregate import RunConfig as IntegratorConfig, integrate_run
 from .geometry import Geometry, r_ratio, beta_from_geometry, duct_area
 from .transmitter import compute_and_write_setpoints, TxParams
 from .transmitter_flow import write_lookup_outputs
+from .report_pdf import build_run_report_pdf
 from .tools.legacy_parser import parse_legacy_workbook
 
 logger = logging.getLogger(__name__)
@@ -278,6 +279,20 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "venturi_result_json": (str(outdir / "venturi_result.json") if venturi else None),
     }
     (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
+
+    # ---------------------- Single PDF report ------------------------
+    try:
+        report_pdf = build_run_report_pdf(
+            outdir=outdir,
+            summary_path=outdir / "summary.json",
+            filename="RunReport.pdf",
+        )
+        summary["report_pdf"] = str(report_pdf)
+        (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
+    except Exception as e:
+        summary["report_pdf_error"] = str(e)
+        (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
+
     return summary
 
 
