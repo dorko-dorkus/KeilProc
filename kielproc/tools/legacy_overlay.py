@@ -235,8 +235,47 @@ def extract_baro_from_workbook(xlsx_path: Path) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
+# --- NEW: dry-bulb temperature (Data!H15:I19) in °C → K ---
+def extract_temperature_from_workbook(xlsx_path: Path) -> Dict[str, Any]:
+    """Read dry-bulb temperature from a legacy workbook's Data sheet.
+
+    The function scans ``Data!H15:I19`` for a row where column ``H`` contains
+    a Celsius unit (``C``, ``°C``, ``degC``, ``deg C``) and column ``I`` holds a
+    numeric value.  The value is converted to Kelvin.
+
+    Returns
+    -------
+    dict
+        ``{"status": "ok", "T_K": float, "cell": "Data!I.."}`` when a value
+        is found, ``{"status": "absent"}`` when the region lacks such a row,
+        or ``{"status": "error", "error": str}`` on exceptions.
+    """
+
+    try:
+        wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
+        if "Data" not in wb.sheetnames:
+            return {"status": "absent"}
+        ws = wb["Data"]
+        for r in range(15, 20):  # H15..I19
+            unit = ws.cell(row=r, column=8).value  # H
+            val = ws.cell(row=r, column=9).value  # I
+            if unit is None or val is None:
+                continue
+            unit_s = str(unit).strip().lower()
+            if unit_s in ("c", "°c", "degc", "deg c"):
+                try:
+                    T_K = float(val) + 273.15
+                except Exception:
+                    continue
+                return {"status": "ok", "T_K": T_K, "cell": f"Data!I{r}"}
+        return {"status": "absent"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 __all__ = [
     "extract_piccolo_overlay_from_workbook",
     "extract_baro_from_workbook",
+    "extract_temperature_from_workbook",
     "extract_piccolo_range_and_avg_current",
 ]
