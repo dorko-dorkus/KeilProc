@@ -16,6 +16,7 @@ from .tools.legacy_parser import parse_legacy_workbook
 from .tools.legacy_overlay import (
     extract_piccolo_overlay_from_workbook,
     extract_baro_from_workbook,
+    extract_piccolo_range_and_avg_current,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     in_path = Path(cfg.input_dir)
     prepared_dir: Path
     input_mode: str
+    piccolo_info: Dict[str, Any] = {}
     if in_path.is_dir():
         # Pre-formatted CSV folder
         prepared_dir = in_path
@@ -162,6 +164,11 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         # writes per-port CSVs + summary.json into prepared_dir
         parse_legacy_workbook(in_path, out_dir=prepared_dir, return_mode="files")
         input_mode = "legacy_workbook"
+        # Piccolo range & avg current (for debug/report)
+        try:
+            piccolo_info = extract_piccolo_range_and_avg_current(in_path)
+        except Exception as _e:  # pragma: no cover - defensive
+            piccolo_info = {"status": "error", "error": str(_e)}
         # Barometric pressure from workbook (Data!H15:I19), overrides GUI value
         try:
             _baro = extract_baro_from_workbook(in_path)
@@ -305,6 +312,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     summary = {
         "baro_pa": baro_pa,
         "baro_source": baro_source,
+        "piccolo_info": piccolo_info,
         "site_name": site.name,
         "r": r,
         "beta": beta,
