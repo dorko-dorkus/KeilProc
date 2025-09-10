@@ -4,6 +4,7 @@ from pathlib import Path
 import json, re
 import numpy as np
 import pandas as pd
+from .physics import rho_from_pT, rho_from_pT_scalar, R_SPECIFIC_AIR
 
 # Matches P1, PORT 1, Port_1, Run07_P1, etc.  Avoids matching P10 etc.
 _PORT_PAT = re.compile(r"(?i)(?<![0-9A-Za-z])P(?:ORT)?[ _]*([1-8])(?![0-9A-Za-z])")
@@ -121,7 +122,7 @@ def discover_pairs(run_dir: Path, file_glob: str) -> tuple[list[tuple[str, Path]
     """
     return _discover_pairs(run_dir, file_glob)
 
-R = 287.05  # J/(kg·K)
+R = R_SPECIFIC_AIR  # J/(kg·K)
 
 # ——— Normalizer utilities ———
 
@@ -273,28 +274,46 @@ class RunConfig:
 
 
 def _port_scalars_from_samples(norm: pd.DataFrame, replicate_strategy: str) -> dict:
-    # per-sample density & velocity
+    """Compute scalar summaries for a port from sample-wise data.
+
+    Returns a dict containing mean velocity, mass flux, dynamic pressure, and
+    the mean static pressure and temperature (Kelvin) for the port. If a
+    ``Replicate`` column is present, averaging respects the provided replicate
+    strategy (``"mean"`` or ``"last"``).
+    """
     tC = norm["Temperature"].to_numpy(float)
     if np.any(tC <= -273.15):
         raise ValueError("Temperature at or below -273.15°C encountered")
-    # Heuristic: if median °C is near 0 or extremely hot, units may be wrong
     if np.nanmedian(tC) < -30 or np.nanmedian(tC) > 650:
         raise ValueError("Temperature °C looks implausible for this campaign; check units/legacy parse")
     T_K = tC + 273.15
     p_s = norm["Static_abs_Pa"].to_numpy(float)
     vp  = norm["VP"].to_numpy(float).clip(min=0.0)
-    rho = p_s / (R * T_K)
-    v   = np.sqrt(2.0 * vp / rho, where=rho>0, out=np.full_like(rho, np.nan))
-    rhov= rho * v
+    rho = rho_from_pT(p_s, T_K, R=R_SPECIFIC_AIR)
+    v   = np.sqrt(2.0 * vp / rho, where=rho > 0, out=np.full_like(rho, np.nan))
+    rhov = rho * v
     qs  = 0.5 * rho * v * v
 
-    df = pd.DataFrame({"v": v, "rhov": rhov, "qs": qs, "rep": norm.get("Replicate", pd.Series(index=norm.index, data=np.nan))})
+    df = pd.DataFrame({
+        "v": v,
+        "rhov": rhov,
+        "qs": qs,
+        "p_s_pa": p_s,
+        "T_K": T_K,
+        "rep": norm.get("Replicate", pd.Series(index=norm.index, data=np.nan)),
+    })
     if "Replicate" in norm.columns:
         g = df.groupby("rep", dropna=True).mean(numeric_only=True)
         row = g.iloc[-1] if replicate_strategy == "last" else g.mean()
     else:
         row = df.mean(numeric_only=True)
-    return {"v_m_s": float(row["v"]), "rho_v_kg_m2_s": float(row["rhov"]), "q_s_pa": float(row["qs"])}
+    return {
+        "v_m_s": float(row["v"]),
+        "rho_v_kg_m2_s": float(row["rhov"]),
+        "q_s_pa": float(row["qs"]),
+        "p_s_pa": float(row["p_s_pa"]),
+        "T_K": float(row["T_K"]),
+    }
 
 def integrate_run(
     run_dir: Path,
@@ -350,7 +369,27 @@ def integrate_run(
     Q = A * v_bar
     m_dot = A * mflux
 
-    out = {"v_bar_m_s": v_bar, "area_m2": A, "Q_m3_s": Q, "m_dot_kg_s": m_dot}
+    p_s_mean = float(np.nanmean(per["p_s_pa"].to_numpy(float)))
+    T_mean_K = float(np.nanmean(per["T_K"].to_numpy(float)))
+    rho_scalar = None
+    try:
+        rho_scalar = rho_from_pT_scalar(p_s_mean, T_mean_K)
+    except Exception:
+        rho_scalar = None
+
+    out = {
+        "v_bar_m_s": v_bar,
+        "area_m2": A,
+        "Q_m3_s": Q,
+        "m_dot_kg_s": m_dot,
+        "p_s_pa_mean": p_s_mean,
+        "temp_K_mean": T_mean_K,
+        "temp_C_mean": T_mean_K - 273.15,
+    }
+    if rho_scalar is not None and np.isfinite(rho_scalar):
+        out["rho_kg_m3"] = float(rho_scalar)
+        out["rho_source"] = "ideal_gas_pT_plane_static"
+
     if area_ratio is not None:
         q_s = float(np.nansum(w * per["q_s_pa"].to_numpy(float)))
         out["q_s_pa"] = q_s
