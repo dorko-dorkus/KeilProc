@@ -13,27 +13,19 @@ def _load_json(p: Path) -> dict:
         return json.loads(Path(p).read_text())
     except Exception:
         return {}
-def _fig_text_page(title: str, blocks: list[list[str]]) -> plt.Figure:
-    """
-    Render a text-only page. `blocks` is a list of paragraphs (each is list of lines).
-    """
+
+
+def _fig_text(title: str, lines: list[str]) -> plt.Figure:
+    """Simple text page with conservative wrapping to avoid spillover."""
     fig = plt.figure(figsize=(8.27, 11.69))  # A4 portrait
     ax = fig.add_axes([0,0,1,1]); ax.axis("off")
     y = 0.94
     ax.text(0.08, y, title, va="top", ha="left", fontsize=14, weight="bold")
     y -= 0.036
-    # wrap long lines to avoid spillover at ~95 monospace chars
-    def _wrap_para(lines, width=95):
-        out = []
-        for ln in lines:
-            out.extend(textwrap.fill(ln, width=width).split("\n"))
-        return out
-    for para in blocks:
-        wrapped = _wrap_para(para)
-        txt = "\n".join(wrapped)
-        ax.text(0.08, y, txt, va="top", ha="left", fontsize=10, family="monospace")
-        # line height tuned for monospace 10pt
-        y -= 0.032 + 0.014*max(1, txt.count("\n")+1)
+    for raw in lines:
+        wrapped = textwrap.fill(raw, width=95)
+        ax.text(0.08, y, wrapped, va="top", ha="left", fontsize=10, family="monospace")
+        y -= 0.032 + 0.014 * max(1, wrapped.count("\n") + 1)
         if y < 0.08:
             break
     return fig
@@ -79,8 +71,11 @@ def _fig_cover(outdir: Path, summary_path: Path) -> plt.Figure:
     return fig
 
 
-def _summary_page(outdir: Path, summary_path: Path) -> plt.Figure:
-    """Single-page: Summary + Context & Method + Recommendations (compact)."""
+def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
+    """
+    One compact page: Summary + Context & Method + Recommendations.
+    Also fixes Piccolo mapping to multi-line bullets so it never overflows.
+    """
     s = _load_json(summary_path)
     meta = _load_json(Path(outdir) / "transmitter_lookup_meta.json")
 
@@ -169,62 +164,41 @@ def _summary_page(outdir: Path, summary_path: Path) -> plt.Figure:
     dp_cross_rec = _cross(K or 0.0, m_rec, c_rec)
 
     # ---------- Build one compact page ----------
-    blocks = []
-    blocks.append([
-        "Summary",
-        "───────",
-        f"Season: {season or 'n/a'}",
-        f"Calibration:  K (UIC) = {K if K is not None else 'n/a'}  |  m (820) = {m if m is not None else 'n/a'}  |  c (820) = {c if c is not None else 'n/a'}",
-        f"Barometric pressure: {baro_line}",
-    ])
+    L: list[str] = []
+    L.append("Summary")
+    L.append("───────")
+    L.append(f"Season: {season or 'n/a'}   Calibration: K(UIC)={K if K is not None else 'n/a'}   m(820)={m if m is not None else 'n/a'}   c(820)={c if c is not None else 'n/a'}")
+    L.append(f"Barometric pressure: {baro_line}")
     if n > 0:
-        # Piccolo mapping: break into multiple lines to avoid overflow
-        s_all = _load_json(summary_path)
-        pic = (s_all.get("piccolo_info") or {})
+        L.append(f"Overlay (Piccolo-derived DP): n={n}   DP band: {dp_min:.3f}–{dp_max:.3f} mbar   820−UIC mean|Δ|={mean_abs_err:.3f} t/h   worst|Δ|={worst_abs_err:.3f} t/h")
+        L.append("Piccolo mapping:")
+        pic = (s.get("piccolo_info") or {})
         rng = pic.get("range_mbar", None)
         avgI = pic.get("avg_current_mA", None)
-        lines = [
-            "Overlay (Piccolo-derived DP):",
-            f"  Samples: n = {n}   DP band: {dp_min:.3f}–{dp_max:.3f} mbar",
-            f"  820 vs UIC error: mean |Δ| = {mean_abs_err:.3f} t/h   |   worst |Δ| = {worst_abs_err:.3f} t/h",
-            "Piccolo mapping:",
-        ]
-        if rng is not None:  lines.append(f"  Range: {rng:.3f} mbar")
-        if avgI is not None: lines.append(f"  Average current (workbook): {avgI:.4f} mA")
+        if rng is not None:
+            L.append(f"  • Range: {rng:.3f} mbar")
+        if avgI is not None:
+            L.append(f"  • Average current (workbook): {avgI:.4f} mA")
         if rng and dp_min is not None and dp_max is not None and rng > 0:
-            I_lo = 4.0 + 16.0*(dp_min/float(rng))
-            I_hi = 4.0 + 16.0*(dp_max/float(rng))
-            lines.append(f"  Implied current from overlay DP: {I_lo:.4f}–{I_hi:.4f} mA")
-        blocks.append(lines)
+            I_lo = 4.0 + 16.0 * (dp_min / float(rng))
+            I_hi = 4.0 + 16.0 * (dp_max / float(rng))
+            L.append(f"  • Implied current from overlay DP: {I_lo:.4f}–{I_hi:.4f} mA")
     else:
-        blocks.append(["Overlay: not present (reference curves only). "])
+        L.append("Overlay: not present (reference curves only).")
     if dp_cross is not None:
-        blocks.append([f"Crossover (current 820=UIC): DP ≈ {dp_cross:.3f} mbar"])
-
-    # Context & Method (compact)
-    ctx = [
-        "Context & Method:",
-        "  • UIC (physics): Flow_UIC = K·√DP",
-        "  • 820 (linear):  Flow_820 = m·DP + c",
-        "  • Overlay DP from Piccolo 4–20 mA and workbook Range (mbar).",
-        "  • Baro from workbook Data!H15:I19 (kPa→Pa) when available.",
-        "  • Full plot shows DP 0–10 mbar; zoom focuses on your overlay band.",
-    ]
-    blocks.append(ctx)
-
-    # Recommendations (compact; L2 over operating band)
-    rec = [
-        "Recommendations (L2 fit over operating band):",
-        f"  Band used: {lo:.3f}–{hi:.3f} mbar",
-        f"  Current 820: m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}",
-        f"  Proposed 820: m*={m_rec:.4f}  c*={c_rec:.4f}   (Δm={((m_rec-(m or 0.0))):+.4f}  Δc={((c_rec-(c or 0.0))):+.4f})",
-        f"  Error over band — Current: mean|Δ|={cur_mean:.3f}  worst|Δ|={cur_worst:.3f}@{cur_wdp:.3f} mbar;  Proposed: mean|Δ|={rec_mean:.3f}  worst|Δ|={rec_worst:.3f}@{rec_wdp:.3f} mbar",
-    ]
+        L.append(f"Crossover (current 820 = UIC): DP ≈ {dp_cross:.3f} mbar")
+    L.append("Context & Method:")
+    L.append("  • UIC (physics): Flow_UIC = K·√DP")
+    L.append("  • 820 (linear):  Flow_820 = m·DP + c")
+    L.append("  • Overlay DP from Piccolo 4–20 mA using workbook Range (mbar); baro from Data!H15:I19 when available.")
+    L.append("Recommendations (L2 over operating band):")
+    L.append(f"  • Band used: {lo:.3f}–{hi:.3f} mbar")
+    L.append(f"  • Current 820: m={m if m is not None else 'n/a'}   c={c if c is not None else 'n/a'}")
+    L.append(f"  • Proposed 820: m*={m_rec:.4f}   c*={c_rec:.4f}   (Δm={(m_rec-(m or 0.0)):+.4f}  Δc={(c_rec-(c or 0.0)):+.4f})")
+    L.append(f"  • Error over band — Current: mean|Δ|={cur_mean:.3f}, worst|Δ|={cur_worst:.3f}@{cur_wdp:.3f} mbar; Proposed: mean|Δ|={rec_mean:.3f}, worst|Δ|={rec_worst:.3f}@{rec_wdp:.3f} mbar")
     if dp_cross_rec is not None:
-        rec.append(f"  Proposed crossover (820=UIC): DP ≈ {dp_cross_rec:.3f} mbar")
-    blocks.append(rec)
-
-    return _fig_text_page("Summary", blocks)
+        L.append(f"  • Proposed crossover (820 = UIC): DP ≈ {dp_cross_rec:.3f} mbar")
+    return _fig_text("Summary", L)
 
 
 def _fig_per_port_table(per_port_csv: Path) -> plt.Figure | None:
@@ -357,8 +331,8 @@ def build_run_report_pdf(
     with PdfPages(pdf_path) as pdf:
         # Cover
         pdf.savefig(_fig_cover(outdir, summary_path)); plt.close()
-        # One compact page: Summary + Context + Recommendations
-        f = _summary_page(outdir, summary_path)
+        # Single merged page (Summary + Context & Method + Recommendations)
+        f = _summary_merged(outdir, summary_path)
         if f: pdf.savefig(f); plt.close()
         # Per-port table
         f = _fig_per_port_table(outdir / "per_port.csv")
