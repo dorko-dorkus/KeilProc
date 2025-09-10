@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 import logging, json, math
+import hashlib, time, os
 from .aggregate import RunConfig as IntegratorConfig, integrate_run
 from .geometry import Geometry, r_ratio, beta_from_geometry, duct_area
 from .transmitter import compute_and_write_setpoints, TxParams
@@ -315,6 +316,79 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         dp_max_mbar=float(cfg.lookup_dp_max_mbar or 10.0),
     )
 
+    # --- Build input manifest & hashes for audit/repro ---
+    def _file_meta(p: Path):
+        try:
+            st = p.stat()
+            h = hashlib.sha256()
+            with p.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    h.update(chunk)
+            return {
+                "path": str(p),
+                "bytes": st.st_size,
+                "mtime_utc": int(st.st_mtime),
+                "sha256": h.hexdigest(),
+            }
+        except Exception:
+            return {"path": str(p), "error": "stat_or_hash_failed"}
+
+    input_manifest = []
+    # include legacy workbook or prepared CSVs; also any logger/overlay CSV we produced
+    try:
+        if input_mode == "legacy_workbook":
+            input_manifest.append(_file_meta(in_path))
+        # staged/parsed inputs (if present)
+        for p in sorted(Path(cfg.input_dir).glob(cfg.file_glob or "*.csv")):
+            input_manifest.append(_file_meta(p))
+    except Exception:
+        pass
+
+    # overlay/lookup files if present in output
+    for name in [
+        "transmitter_lookup_combined.csv",
+        "transmitter_lookup_data.csv",
+        "transmitter_lookup_reference.csv",
+        "per_port.csv",
+    ]:
+        p = outdir / name
+        if p.exists():
+            input_manifest.append(_file_meta(p))
+
+    # acceptance thresholds (can be overridden later by cfg)
+    acceptance = {"mean_abs_tph_max": 0.5, "worst_abs_tph_max": 1.0}
+
+    # reproducibility block
+    run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    git_sha = None
+    try:
+        # best effort: read .git/HEAD
+        head = Path(__file__).resolve().parents[2] / ".git" / "HEAD"
+        if head.exists():
+            ref = head.read_text().strip()
+            if ref.startswith("ref:"):
+                ref_path = (
+                    Path(__file__).resolve().parents[2] / ".git" / ref.split(":", 1)[1].strip()
+                )
+                if ref_path.exists():
+                    git_sha = ref_path.read_text().strip()[:12]
+            else:
+                git_sha = ref[:12]
+    except Exception:
+        git_sha = None
+    git_sha = os.environ.get("GIT_SHA", git_sha)
+    cfg_hash_src = json.dumps(
+        {
+            "inputs": [m.get("path") for m in input_manifest],
+            "site": site.name,
+            "baro_pa": baro_pa,
+            "beta": beta,
+            "T_K": T_K if "T_K" in locals() else None,
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    cfg_hash = hashlib.sha256(cfg_hash_src).hexdigest()[:12]
+
     summary = {
         "baro_pa": baro_pa,
         "baro_source": baro_source,
@@ -326,6 +400,12 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "T_K": T_K,
         "rho_kg_m3": rho_used,
         "rho_source": "ideal_gas_pT" if rho_used else "unknown",
+        # audit / repro metadata
+        "inputs_manifest": input_manifest,
+        "acceptance": acceptance,
+        "run_id": run_id,
+        "git_sha": git_sha,
+        "config_hash": cfg_hash,
         "input_mode": input_mode,
         "prepared_input_dir": str(prepared_dir),
         "per_port_csv": str(outdir / "per_port.csv"),
