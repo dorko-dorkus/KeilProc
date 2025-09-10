@@ -1,10 +1,9 @@
 from __future__ import annotations
 from matplotlib.backends.backend_pdf import PdfPages
-import json, math, textwrap
+import json, math, textwrap, hashlib, os, datetime
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from datetime import datetime
 from pathlib import Path
 
 
@@ -94,7 +93,7 @@ def _fig_cover(outdir: Path, summary_path: Path) -> plt.Figure:
     lines = []
     lines.append("KielProc — Mill PA Differential Validation Report")
     lines.append("")
-    lines.append(f"Generated: {datetime.now().isoformat(timespec='seconds')}")
+    lines.append(f"Generated: {datetime.datetime.now().isoformat(timespec='seconds')}")
     if s:
         lines.append(f"Site: {s.get('site_name','')}")
         bp = s.get("baro_pa", None)
@@ -341,6 +340,288 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     return _fig_text("Summary", flat)
 
 
+# ---------- NEW: Inputs snapshot ----------
+def _page_inputs_snapshot(outdir: Path, summary_path: Path) -> plt.Figure:
+    s = json.loads(Path(summary_path).read_text())
+    L = []
+    L.append("Inputs snapshot:")
+    man = s.get("inputs_manifest") or []
+    if not man:
+        L.append("  • No manifest recorded.")
+    else:
+        for m in man:
+            line = f"  • {m.get('path','?')}"
+            if "bytes" in m:
+                line += f"  ({m['bytes']} bytes)"
+            if "mtime_utc" in m:
+                ts = datetime.datetime.utcfromtimestamp(int(m["mtime_utc"]))\
+                     .strftime("%Y-%m-%d %H:%M:%SZ")
+                line += f"  mtime_utc={ts}"
+            if "sha256" in m:
+                line += f"  sha256={m['sha256'][:12]}"
+            if "error" in m:
+                line += f"  [{m['error']}]"
+            L.append(line)
+    beta = s.get("beta"); A1=None; At=None; rho=s.get("rho_kg_m3")
+    duct = Path(outdir) / "duct_result.json"
+    if duct.exists():
+        dj = json.loads(duct.read_text())
+        A1 = dj.get("area_m2")
+        At = dj.get("At_m2") or ((beta**2)*A1 if beta and A1 else None)
+    L.append("")
+    L.append("Geometry & density:")
+    if beta is not None:
+        L.append(f"  • beta={beta:.4f}")
+    if A1   is not None:
+        L.append(f"  • A1={A1:.4f} m^2")
+    if At   is not None:
+        L.append(f"  • At={At:.4f} m^2")
+    if rho  is not None:
+        L.append(f"  • rho={rho:.4f} kg/m^3")
+    return _fig_text("Inputs", L)
+
+
+# ---------- NEW: Data quality & exclusions ----------
+def _page_data_quality(outdir: Path) -> plt.Figure:
+    L = []
+    L.append("Data quality and exclusions:")
+    comb = Path(outdir) / "transmitter_lookup_combined.csv"
+    if comb.exists():
+        df = pd.read_csv(comb)
+        L.append(
+            f"Overlay CSV: rows={len(df)}  NaNs per column: " +
+            ", ".join(f"{c}:{df[c].isna().sum()}" for c in df.columns)
+        )
+    else:
+        L.append("Overlay CSV not present.")
+    per = Path(outdir) / "per_port.csv"
+    if per.exists():
+        d = pd.read_csv(per)
+        L.append(
+            f"Per-port CSV: rows={len(d)}  NaNs per column: " +
+            ", ".join(f"{c}:{d[c].isna().sum()}" for c in d.columns)
+        )
+        if "weight" in d.columns:
+            disabled = d.index[(d["weight"].fillna(0) <= 0)].tolist()
+            if disabled:
+                L.append(f"Disabled/zero-weight ports: {disabled}")
+    else:
+        L.append("Per-port CSV not present.")
+    return _fig_text("Data quality", L)
+
+
+# ---------- NEW: Operating band & recommendations table + verdict ----------
+def _page_band_table_and_verdict(outdir: Path, summary_path: Path) -> plt.Figure:
+    s = json.loads(Path(summary_path).read_text())
+    K = float(s.get("K") or s.get("K_uic") or 0.0)
+    m = s.get("m_820"); c = s.get("c_820")
+    comb = Path(outdir) / "transmitter_lookup_combined.csv"
+    if comb.exists() and "data_DP_mbar" in pd.read_csv(comb, nrows=1).columns:
+        df = pd.read_csv(comb)
+        dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
+        lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
+    else:
+        lo, hi = 2.0, 6.0
+    lo = max(lo, 1e-6); hi = max(hi, lo+1e-6); mid = 0.5*(lo+hi)
+    def f(dp):
+        return K*np.sqrt(np.clip(dp,0,None))
+    def fprime(dp):
+        return (0.0 if dp<=0 else K/(2.0*np.sqrt(dp)))
+    m_tan = fprime(mid); c_tan = f(mid)-m_tan*mid
+    m_sec = (f(hi)-f(lo))/(hi-lo); c_sec = f(lo)-m_sec*lo
+    gx = np.linspace(lo, hi, 1000); yx = f(gx)
+    X = np.c_[gx, np.ones_like(gx)]; m_l2, c_l2 = np.linalg.lstsq(X, yx, rcond=None)[0]
+    m_min, m_max = fprime(hi), fprime(lo)
+    def extremal_g(mv):
+        xstar = (K/(2.0*mv))**2 if (mv>0 and K>0) else None
+        xs = [lo, hi] + ([xstar] if (xstar is not None and lo<=xstar<=hi) else [])
+        g = [mv*x - f(x) for x in xs]
+        iM, im = int(np.argmax(g)), int(np.argmin(g))
+        return xs[iM], xs[im], float(max(g)), float(min(g))
+    best = {"t": np.inf, "m": None, "c": None}
+    for mv in np.linspace(m_min, m_max, 400):
+        xp, xn, gp, gn = extremal_g(mv)
+        cv = -0.5*(gp+gn); t = 0.5*(gp-gn)
+        if t < best["t"]:
+            best.update({"t": t, "m": float(mv), "c": float(cv)})
+    m_inf = float(best["m"]) if best["m"] is not None else float(m_l2)
+    c_inf = float(best["c"]) if best["c"] is not None else float(c_l2)
+    def band_err(mv, cv):
+        e = (mv*gx + cv) - yx
+        return float(np.mean(np.abs(e))), float(np.max(np.abs(e)))
+    cur_mean, cur_worst = band_err(float(m or 0.0), float(c or 0.0))
+    tan_mean, tan_worst = band_err(m_tan, c_tan)
+    sec_mean, sec_worst = band_err(m_sec, c_sec)
+    l2_mean,  l2_worst  = band_err(m_l2,  c_l2)
+    inf_mean, inf_worst = band_err(m_inf, c_inf)
+    acc = s.get("acceptance") or {}
+    thr_mean = float(acc.get("mean_abs_tph_max", 0.5))
+    thr_worst = float(acc.get("worst_abs_tph_max", 1.0))
+    verdict_ok = (inf_mean <= thr_mean) and (inf_worst <= thr_worst)
+    L = []
+    L.append("Operating band and recommendations (table):")
+    L.append(f"  Band: {lo:.3f}–{hi:.3f} mbar   mid={mid:.3f} mbar")
+    L.append(
+        f"  Thresholds: mean|e|<= {thr_mean:.3f} t/h, worst|e|<= {thr_worst:.3f} t/h  ->  Verdict: {'PASS' if verdict_ok else 'FAIL'}"
+    )
+    L.append("  Current:  m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
+        float(m or 0.0), float(c or 0.0), cur_mean, cur_worst))
+    L.append("  Tangent:  m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
+        m_tan, c_tan, tan_mean, tan_worst))
+    L.append("  Secant:   m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
+        m_sec, c_sec, sec_mean, sec_worst))
+    L.append("  L2:       m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
+        m_l2,  c_l2,  l2_mean,  l2_worst))
+    L.append("  L_inf*:   m*={:.4f} c*={:.4f}   mean|e|={:.3f}  worst|e|={:.3f}   [Proposed]".format(
+        m_inf, c_inf, inf_mean, inf_worst))
+    return _fig_text("Operating band & recommendations", L)
+
+
+# ---------- NEW: Before/after error bars ----------
+def _fig_error_bars(outdir: Path, summary_path: Path) -> plt.Figure:
+    s = json.loads(Path(summary_path).read_text())
+    K = float(s.get("K") or s.get("K_uic") or 0.0)
+    m = s.get("m_820"); c = s.get("c_820")
+    comb = Path(outdir) / "transmitter_lookup_combined.csv"
+    if comb.exists() and "data_DP_mbar" in pd.read_csv(comb, nrows=1).columns:
+        df = pd.read_csv(comb)
+        dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
+        lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
+    else:
+        lo, hi = 2.0, 6.0
+    gx = np.linspace(lo, hi, 1000); yx = K*np.sqrt(gx)
+    X = np.c_[gx, np.ones_like(gx)]; m_l2, c_l2 = np.linalg.lstsq(X, yx, rcond=None)[0]
+    m_min, m_max = K/(2.0*np.sqrt(hi)), K/(2.0*np.sqrt(lo))
+    best = {"t": np.inf, "m": None, "c": None}
+    def extremal(mv):
+        xstar = (K/(2.0*mv))**2 if (mv>0 and K>0) else None
+        xs = [lo, hi] + ([xstar] if (xstar is not None and lo<=xstar<=hi) else [])
+        g = [mv*x - K*np.sqrt(x) for x in xs]
+        gmax, gmin = max(g), min(g)
+        return -0.5*(gmax+gmin), 0.5*(gmax-gmin)
+    for mv in np.linspace(m_min, m_max, 400):
+        cv, t = extremal(mv)
+        if t < best["t"]:
+            best.update({"t": t, "m": float(mv), "c": float(cv)})
+    def stats(mv, cv):
+        e = (mv*gx + cv) - yx
+        return float(np.mean(np.abs(e))), float(np.max(np.abs(e)))
+    cur = stats(float(m or 0.0), float(c or 0.0))
+    l2  = stats(float(m_l2), float(c_l2))
+    linf= stats(float(best["m"]), float(best["c"]))
+    labels = ["Current", "L2", "L_inf (Proposed)"]
+    means  = [cur[0], l2[0], linf[0]]
+    worsts = [cur[1], l2[1], linf[1]]
+    fig = plt.figure(figsize=(11.69, 8.27)); ax = fig.add_subplot(111)
+    x = np.arange(len(labels))
+    ax.bar(x-0.18, means, width=0.36, label="mean|e| (t/h)")
+    ax.bar(x+0.18, worsts, width=0.36, label="worst|e| (t/h)")
+    ax.set_xticks(x); ax.set_xticklabels(labels)
+    ax.set_ylabel("Error (t/h)"); ax.set_title("Error over operating band")
+    ax.grid(True, linestyle="--", alpha=0.4); ax.legend()
+    return fig
+
+
+# ---------- NEW: Overlay coverage histogram ----------
+def _fig_overlay_hist(outdir: Path) -> plt.Figure | None:
+    p = Path(outdir) / "transmitter_lookup_combined.csv"
+    if not p.exists():
+        return None
+    df = pd.read_csv(p)
+    if "data_DP_mbar" not in df.columns:
+        return None
+    vals = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna().to_numpy(float)
+    fig = plt.figure(figsize=(11.69, 8.27)); ax = fig.add_subplot(111)
+    ax.hist(vals, bins=40, alpha=0.8)
+    ax.set_xlabel("DP (mbar)"); ax.set_ylabel("count")
+    ax.set_title("Overlay DP coverage (samples)")
+    ax.grid(True, linestyle="--", alpha=0.4)
+    return fig
+
+
+# ---------- NEW: Density & geometry provenance ----------
+def _page_density_geometry(outdir: Path, summary_path: Path) -> plt.Figure:
+    s = json.loads(Path(summary_path).read_text())
+    L = []
+    L.append("Density & geometry provenance:")
+    L.append(f"  • baro_pa = {s.get('baro_pa','n/a')}")
+    T_K = s.get("T_K"); thermo = s.get("thermo_source") or {}
+    if isinstance(T_K, (int,float)):
+        src = thermo.get("source","unknown"); cell = thermo.get("cell",""); label = thermo.get("label","")
+        L.append(f"  • T_K = {T_K:.2f} K ({T_K-273.15:.1f} C)  [source={src} {cell} '{label}']")
+    rho = s.get("rho_kg_m3"); rsrc = s.get("rho_source","unknown")
+    if isinstance(rho,(int,float)):
+        L.append(f"  • rho = {rho:.4f} kg/m^3  [{rsrc}]")
+        if rho < 0.2 or rho > 2.0:
+            L.append("  • WARNING: implausible density — check baro/T units.")
+    beta = s.get("beta")
+    duct = Path(outdir) / "duct_result.json"
+    A1=At=None
+    if duct.exists():
+        dj = json.loads(duct.read_text())
+        A1 = dj.get("area_m2"); At = dj.get("At_m2") or ((beta**2)*A1 if beta and A1 else None)
+    if beta is not None:
+        L.append(f"  • beta = {beta:.4f}")
+    if A1   is not None:
+        L.append(f"  • A1 = {A1:.4f} m^2")
+    if At   is not None:
+        L.append(f"  • At = {At:.4f} m^2")
+    return _fig_text("Density & Geometry", L)
+
+
+# ---------- NEW: Port map & weights ----------
+def _page_port_weights(outdir: Path) -> plt.Figure:
+    per = Path(outdir) / "per_port.csv"
+    L = ["Port map & weights:"]
+    if not per.exists():
+        L.append("  • per_port.csv not present.")
+        return _fig_text("Port map", L)
+    df = pd.read_csv(per)
+    cols = [c for c in df.columns if c.lower() in ("port","id","name")]
+    ids = df[cols[0]].astype(str).tolist() if cols else [str(i) for i in range(len(df))]
+    w = df["weight"].fillna(1.0/len(df)) if "weight" in df.columns else pd.Series([1.0/len(df)]*len(df))
+    qs = df["q_s_pa"] if "q_s_pa" in df.columns else pd.Series([float("nan")]*len(df))
+    for i,(pid, wi, qi) in enumerate(zip(ids, w, qs)):
+        L.append(f"  • port {pid:>3}: weight={wi:.4f}   q_s_pa={('%.2f'%qi) if pd.notna(qi) else 'n/a'}")
+    return _fig_text("Port map", L)
+
+
+# ---------- NEW: Transmitter details ----------
+def _page_tx_details(outdir: Path, summary_path: Path) -> plt.Figure:
+    s = json.loads(Path(summary_path).read_text())
+    m = s.get("m_820"); c = s.get("c_820")
+    span = None
+    for name in ["transmitter_lookup_combined.csv", "transmitter_lookup_reference.csv"]:
+        p = Path(outdir) / name
+        if p.exists():
+            df = pd.read_csv(p)
+            if "range_mbar" in df.columns:
+                vals = pd.to_numeric(df["range_mbar"], errors="coerce").dropna()
+                if len(vals):
+                    span = float(vals.iloc[0]); break
+    L = []
+    L.append("Transmitter details:")
+    L.append(f"  • Current 820 settings: m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}")
+    L.append(f"  • DP span (range_mbar): {span if span is not None else 'n/a'}")
+    L.append("  • Proposed: see Operating band & recommendations page (L_inf row).")
+    return _fig_text("Transmitter", L)
+
+
+# ---------- NEW: Repro & version ----------
+def _page_repro_version(outdir: Path, summary_path: Path) -> plt.Figure:
+    s = json.loads(Path(summary_path).read_text())
+    L = []
+    L.append("Reproducibility & version:")
+    L.append(f"  • Run ID: {s.get('run_id','n/a')}")
+    L.append(f"  • Pipeline git SHA: {s.get('git_sha','n/a')}")
+    L.append(f"  • Config hash: {s.get('config_hash','n/a')}")
+    acc = s.get("acceptance") or {}
+    L.append(
+        f"  • Acceptance thresholds: mean|e| <= {acc.get('mean_abs_tph_max',0.5)} t/h; worst|e| <= {acc.get('worst_abs_tph_max',1.0)} t/h"
+    )
+    return _fig_text("Repro & version", L)
+
+
 def _fig_per_port_table(per_port_csv: Path) -> plt.Figure | None:
     p = Path(per_port_csv)
     if not p.exists(): return None
@@ -506,6 +787,33 @@ def build_run_report_pdf(
         pdf.savefig(_fig_cover(outdir, summary_path)); plt.close()
         # Single merged page (Summary + Context & Method + Recommendations)
         f = _summary_merged(outdir, summary_path)
+        if f: pdf.savefig(f); plt.close()
+        # Inputs snapshot
+        f = _page_inputs_snapshot(outdir, summary_path)
+        if f: pdf.savefig(f); plt.close()
+        # Data quality & exclusions
+        f = _page_data_quality(outdir)
+        if f: pdf.savefig(f); plt.close()
+        # Operating band table & verdict
+        f = _page_band_table_and_verdict(outdir, summary_path)
+        if f: pdf.savefig(f); plt.close()
+        # Error bars (before/after)
+        f = _fig_error_bars(outdir, summary_path)
+        if f: pdf.savefig(f); plt.close()
+        # Overlay coverage histogram
+        f = _fig_overlay_hist(outdir)
+        if f: pdf.savefig(f); plt.close()
+        # Density & geometry provenance
+        f = _page_density_geometry(outdir, summary_path)
+        if f: pdf.savefig(f); plt.close()
+        # Port map & weights
+        f = _page_port_weights(outdir)
+        if f: pdf.savefig(f); plt.close()
+        # Transmitter details
+        f = _page_tx_details(outdir, summary_path)
+        if f: pdf.savefig(f); plt.close()
+        # Repro & version
+        f = _page_repro_version(outdir, summary_path)
         if f: pdf.savefig(f); plt.close()
         # Per-port table
         f = _fig_per_port_table(outdir / "per_port.csv")
