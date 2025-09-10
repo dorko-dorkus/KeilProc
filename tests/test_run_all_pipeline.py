@@ -113,4 +113,4 @@ def test_run_all_accepts_workbook(tmp_path):
     assert abs(dfp["DP_mbar"].iloc[1] - ((12.0 - 4.0) / 16.0 * 6.7)) < 1e-6
     # Barometric pressure extracted from workbook Data sheet
     assert summary["baro_pa"] == 101_600.0
-    assert summary["baro"]["status"] == "ok"
+    assert summary["baro_source"]["source"] == "workbook"

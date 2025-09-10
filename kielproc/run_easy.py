@@ -140,8 +140,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     """Execute integration and transmitter setpoints; write SoT artifacts."""
     logger.info("Run start: input=%s output=%s glob=%s", cfg.input_dir, cfg.output_dir, cfg.file_glob)
     site = _resolve_site(cfg)
-    baro_pa = _resolve_baro(cfg)
-    baro_meta: Dict[str, Any] = {"status": "cli"}
+    baro_source: Dict[str, Any] = {"source": "gui_or_default"}
     geom, r, beta, dims, As, At = _resolve_geometry(site)
     if dims is None:
         raise ValueError("Geometry required: provide duct width+height or duct area.")
@@ -163,16 +162,27 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         # writes per-port CSVs + summary.json into prepared_dir
         parse_legacy_workbook(in_path, out_dir=prepared_dir, return_mode="files")
         input_mode = "legacy_workbook"
+        # Barometric pressure from workbook (Data!H15:I19), overrides GUI value
         try:
-            baro_meta = extract_baro_from_workbook(in_path)
-            if baro_meta.get("status") == "ok":
-                baro_pa = float(baro_meta.get("baro_pa", baro_pa))
-        except Exception as e:  # pragma: no cover - defensive
-            baro_meta = {"status": "error", "error": str(e)}
+            _baro = extract_baro_from_workbook(in_path)
+        except Exception as _e:  # pragma: no cover - defensive
+            _baro = {"status": "error", "error": str(_e)}
+        if _baro.get("status") == "ok" and _baro.get("baro_pa", 0) > 0:
+            cfg.baro_pa = float(_baro["baro_pa"])
+            baro_source = {
+                "source": "workbook",
+                "cell": _baro.get("cell"),
+                "unit_raw": _baro.get("unit_raw"),
+            }
+        else:
+            baro_source = {"source": "gui_or_default", "detail": _baro}
     else:
         raise FileNotFoundError(
             f"Input path must be a folder of CSVs or an .xlsx workbook: {in_path}"
         )
+
+    baro_pa = _resolve_baro(cfg)
+    logger.info("Site: %s  Baro (Pa): %.1f", site.name, baro_pa)
 
     # ---------------------- Integrate on prepared_dir ------------------------
     res = integrate_run(
@@ -222,7 +232,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 # Ideal gas fallback for air: rho = P / (R T)
                 R = 287.05  # J/kg/K
                 T_K = (float(T_C) + 273.15) if isinstance(T_C, (int, float)) else 293.15
-                rho = float(cfg.baro_pa or 101325.0) / (R * T_K)
+                rho = baro_pa / (R * T_K)
             if Qs is None and isinstance(duct.get("m_dot_kg_s"), (int, float)) and rho:
                 Qs = float(duct["m_dot_kg_s"]) / float(rho)
 
@@ -294,7 +304,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
 
     summary = {
         "baro_pa": baro_pa,
-        "baro": baro_meta,
+        "baro_source": baro_source,
         "site_name": site.name,
         "r": r,
         "beta": beta,
