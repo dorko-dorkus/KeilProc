@@ -285,24 +285,57 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
 
 
 def _fig_venturi_curve(outdir: Path) -> plt.Figure | None:
-    curve_csv = Path(outdir) / "venturi_curve.csv"
-    vjson = Path(outdir) / "venturi_result.json"
-    df = None
-    if curve_csv.exists():
-        df = pd.read_csv(curve_csv)
-    elif vjson.exists():
-        try:
-            v = json.loads(vjson.read_text())
-            df = pd.DataFrame(v.get("curve", []))
-        except Exception:
-            df = None
-    if df is None or not {"frac_of_Qs","dp_vent_Pa"}.issubset(df.columns):
+    """
+    Venturi Δp vs Mass Flow with explicit units and on-plot metadata.
+    """
+    outdir = Path(outdir)
+    vr = outdir / "venturi_result.json"
+    dr = outdir / "duct_result.json"
+    flow_kg_s = None; dp_pa = None
+    beta = None; A1 = None; At = None; rho = None
+    if vr.exists():
+        d = json.loads(vr.read_text())
+        flow_kg_s = np.asarray(d.get("flow_kg_s") or d.get("flow"), float)
+        dp_pa     = np.asarray(d.get("dp_pa") or d.get("delta_p_pa"), float)
+        beta = d.get("beta"); A1 = d.get("A1_m2") or d.get("As_m2"); At = d.get("At_m2"); rho = d.get("rho_kg_m3")
+    elif dr.exists():
+        d = json.loads(dr.read_text())
+        # Try to reconstruct curve if geometry is present
+        beta = d.get("beta"); A1 = d.get("area_m2"); At = d.get("At_m2")
+        if (beta is not None) and (A1 is not None) and (At is None):
+            try: At = (float(beta)**2) * float(A1)
+            except: pass
+        rho = d.get("rho_kg_m3")
+        m0  = d.get("m_dot_kg_s"); dp0 = d.get("delta_p_vent_est_pa")
+        if (m0 and rho and At and beta and dp0):
+            m0 = float(m0); rho = float(rho); At = float(At); beta = float(beta)
+            flow_kg_s = np.linspace(max(0.1, 0.25*m0), 2.0*m0, 200)
+            dp_pa = (1.0 - beta**4) * (flow_kg_s**2) / (2.0 * rho * (At**2))
+        else:
+            return None
+    else:
         return None
-    fig = plt.figure(figsize=(11.69, 8.27))
-    ax = fig.add_subplot(111)
-    ax.plot(df["frac_of_Qs"], df["dp_vent_Pa"], marker="o")
-    ax.set_xlabel("Fraction of Qs"); ax.set_ylabel("Venturi Δp (Pa)")
-    ax.set_title("Venturi Δp vs Flow"); ax.grid(True, linestyle="--", alpha=0.4)
+    if flow_kg_s is None or dp_pa is None:
+        return None
+    flow_tph = flow_kg_s * 3.6
+    fig = plt.figure(figsize=(11.69, 8.27)); ax = fig.add_subplot(111)
+    ax.plot(flow_tph, dp_pa, label="Model: Δp = (1−β⁴)·ṁ²/(2·ρ·Aₜ²)")
+    ax.set_title("Venturi Δp vs Mass Flow")
+    ax.set_xlabel("Mass flow (t/h)")
+    ax.set_ylabel("Venturi Δp (Pa)")
+    ax.grid(True, linestyle="--", alpha=0.4); ax.legend()
+    # On-plot metadata (geometry & density)
+    meta = []
+    if beta is not None: meta.append(f"β = {float(beta):.4f}")
+    if A1   is not None: meta.append(f"A₁ = {float(A1):.4f} m²")
+    if At   is not None: meta.append(f"Aₜ = {float(At):.4f} m²")
+    if rho  is not None: meta.append(f"ρ = {float(rho):.4f} kg/m³")
+    if meta:
+        ax.text(0.98, 0.98, "\n".join(meta), ha="right", va="top", transform=ax.transAxes,
+                fontsize=9, bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.6", alpha=0.9))
+    if (rho is not None) and (rho < 0.2 or rho > 2.0):
+        ax.text(0.02, 0.02, "WARNING: ρ looks implausible — check baro/T units",
+                ha="left", va="bottom", transform=ax.transAxes, fontsize=9, color="crimson")
     return fig
 
 
