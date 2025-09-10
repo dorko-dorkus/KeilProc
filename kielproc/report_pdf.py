@@ -566,6 +566,13 @@ def _page_density_geometry(outdir: Path, summary_path: Path) -> plt.Figure:
         L.append(f"  • A1 = {A1:.4f} m^2")
     if At   is not None:
         L.append(f"  • At = {At:.4f} m^2")
+    # plane static provenance from normalization meta
+    norm_meta = Path(outdir) / "normalize_meta.json"
+    if norm_meta.exists():
+        nm = json.loads(norm_meta.read_text())
+        L.append(
+            f"  • plane static source: {nm.get('p_abs_source','n/a')}  (baro_pa_used={nm.get('baro_pa_used','n/a')})"
+        )
     return _fig_text("Density & Geometry", L)
 
 
