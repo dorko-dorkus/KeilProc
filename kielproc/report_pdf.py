@@ -130,35 +130,92 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     except Exception:
         pass
 
-    # ---------- Recommendations (L2 over band) ----------
+    # ---------- Recommendations (ideal local linearization over band) ----------
     def _fit_linear_L2(x, y):
         x = np.asarray(x, float); y = np.asarray(y, float)
-        if x.size < 2:  # degenerate safeguard
+        if x.size < 2:
             xm = float(np.nanmedian(x)) if x.size else 1.0
-            ym = float(np.nanmedian(y)) if y.size else 0.0
+            ym = float(np.nanmedian(y)) if x.size else 0.0
             m_ = 0.0 if xm <= 0 else (ym/(2.0*xm)); c_ = ym - m_*xm
             return float(max(m_,0.0)), float(max(c_,0.0))
         X = np.c_[x, np.ones_like(x)]
         m_, c_ = np.linalg.lstsq(X, y, rcond=None)[0]
         return float(max(m_,0.0)), float(max(c_,0.0))
 
+    # operating band from overlay if available, else default
     if n > 0 and df is not None:
         lo = float(np.percentile(df["data_DP_mbar"], 5.0))
         hi = float(np.percentile(df["data_DP_mbar"], 95.0))
-        if hi - lo < 0.1:
-            mid = 0.5*(lo+hi); lo = max(0.0, mid-0.25); hi = mid+0.25
-        fit_x = df["data_DP_mbar"].to_numpy()
+        if hi - lo < 1e-6:
+            hi = lo + 0.2
     else:
         lo, hi = 2.0, 6.0
-        fit_x = np.linspace(lo, hi, 400)
-    y_uic_fit = (K or 0.0) * np.sqrt(np.clip(fit_x, 0.0, None))
-    m_rec, c_rec = _fit_linear_L2(fit_x, y_uic_fit)
+    lo = max(1e-6, lo); hi = max(lo+1e-6, hi)
+    mid = 0.5*(lo+hi)
+
+    # reference function and helpers
+    K0 = float(K or 0.0)
+    def f(dp): return K0 * np.sqrt(np.clip(dp, 0.0, None))
+    def fprime(dp): return (0.0 if dp <= 0 else K0 / (2.0*np.sqrt(dp)))
+
+    # Tangent at DP_mid
+    m_tan = fprime(mid)
+    c_tan = f(mid) - m_tan*mid
+
+    # Secant across [lo,hi]
+    m_sec = (f(hi) - f(lo)) / (hi - lo)
+    c_sec = f(lo) - m_sec*lo
+
+    # L2 over band (uniform)
+    gx = np.linspace(lo, hi, 800)
+    yx = f(gx)
+    m_l2, c_l2 = _fit_linear_L2(gx, yx)
+
+    # Minimax (L∞) over band: 1D search over slope; optimal c centers sup error
+    m_min = fprime(hi)  # smallest slope in band
+    m_max = fprime(lo)  # largest slope in band
+    m_grid = np.linspace(m_min, m_max, 400)
+    def extremal_g(mv):
+        # g(x) = m*x - f(x); extrema at lo, hi, and where f'(x)=m
+        xstar = (K0/(2.0*mv))**2 if (mv > 0 and K0 > 0) else None
+        xs = [lo, hi]
+        if xstar is not None and lo <= xstar <= hi:
+            xs.append(xstar)
+        gvals = [mv*x - f(x) for x in xs]
+        return xs[int(np.argmax(gvals))], xs[int(np.argmin(gvals))], float(np.max(gvals)), float(np.min(gvals))
+    best = {"t": np.inf, "m": None, "c": None, "x_pos": None, "x_neg": None}
+    for mv in m_grid:
+        xp, xn, gp, gn = extremal_g(mv)
+        # choose c to center sup error: max(e)= -min(e) -> c = - (gmax + gmin)/2
+        cv = -0.5*(gp + gn)
+        t = 0.5*(gp - gn)  # minimized sup |e|
+        if t < best["t"]:
+            best.update({"t": t, "m": float(mv), "c": float(cv), "x_pos": xp, "x_neg": xn})
+    # refine around best slope
+    if best["m"] is not None:
+        m_lo = max(m_min, best["m"] - 0.1*(m_max-m_min))
+        m_hi = min(m_max, best["m"] + 0.1*(m_max-m_min))
+        for mv in np.linspace(m_lo, m_hi, 200):
+            xp, xn, gp, gn = extremal_g(mv)
+            cv = -0.5*(gp + gn); t = 0.5*(gp - gn)
+            if t < best["t"]:
+                best.update({"t": t, "m": float(mv), "c": float(cv), "x_pos": xp, "x_neg": xn})
+    m_inf = float(best["m"]) if best["m"] is not None else m_l2
+    c_inf = float(best["c"]) if best["c"] is not None else c_l2
+
+    # error metrics (uniform grid on band)
     def _band_err(K_, m_, c_, lo_, hi_):
-        gx = np.linspace(max(0.0, lo_), max(lo_, hi_), 400)
+        gx = np.linspace(max(0.0, lo_), max(lo_, hi_), 1000)
         e = (m_*gx + c_) - (K_*np.sqrt(gx))
         return float(np.nanmean(np.abs(e))), float(np.nanmax(np.abs(e))), float(gx[int(np.nanargmax(np.abs(e)))])
-    cur_mean, cur_worst, cur_wdp = _band_err(K or 0.0, m or 0.0, c or 0.0, lo, hi)
-    rec_mean, rec_worst, rec_wdp = _band_err(K or 0.0, m_rec, c_rec, lo, hi)
+    cur_mean, cur_worst, cur_wdp = _band_err(K0, float(m or 0.0), float(c or 0.0), lo, hi)
+    tan_mean, tan_worst, tan_wdp = _band_err(K0, m_tan, c_tan, lo, hi)
+    sec_mean, sec_worst, sec_wdp = _band_err(K0, m_sec, c_sec, lo, hi)
+    l2_mean,  l2_worst,  l2_wdp  = _band_err(K0, m_l2,  c_l2,  lo, hi)
+    inf_mean, inf_worst, inf_wdp = _band_err(K0, m_inf, c_inf, lo, hi)
+    # recommended = minimax
+    m_rec, c_rec = m_inf, c_inf
+
     def _cross(K_, m_, c_):
         try:
             A = m_*m_; B = 2*m_*c_ - K_*K_; Cq = c_*c_
@@ -169,7 +226,7 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
                 if r and r > 0: return float(r)
         except Exception: return None
         return None
-    cross_rec = _cross(K or 0.0, m_rec, c_rec)
+    cross_rec = _cross(K0, m_rec, c_rec)
 
     # ---------- Build one compact page ----------
     # (header "Summary" provided separately by _fig_text)
@@ -225,12 +282,18 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     L.append("  • 820 (linear):   Flow_820 = m*DP + c")
     L.append("  • Overlay DP from Piccolo 4–20 mA; baro from workbook when available.")
     L.append("")  # spacer
-    L.append("Recommendations (L2 over operating band):")
-    L.append(f"  • Band used: {lo:.3f}–{hi:.3f} mbar")
+    L.append("Recommendations (local linearization over operating band):")
+    L.append(f"  • Band: {lo:.3f}–{hi:.3f} mbar   (mid {mid:.3f})")
     L.append(f"  • Current 820: m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}")
-    L.append(f"  • Proposed 820: m*={m_rec:.4f}  c*={c_rec:.4f}  (dm={(m_rec-(m or 0.0)):+.4f}  dc={(c_rec-(c or 0.0)):+.4f})")
-    L.append(f"  • Error over band — Current: mean abs={cur_mean:.3f}, worst abs={cur_worst:.3f} @ {cur_wdp:.3f} mbar")
-    L.append(f"                           Proposed: mean abs={rec_mean:.3f}, worst abs={rec_worst:.3f} @ {rec_wdp:.3f} mbar")
+    L.append(
+        f"  • Proposed 820 (minimax L_inf): m*={m_rec:.4f}  c*={c_rec:.4f}  "
+        f"(dm={(m_rec-(m or 0.0)):+.4f}  dc={(c_rec-(c or 0.0)):+.4f})"
+    )
+    L.append(f"    Errors — Current: mean={cur_mean:.3f}, worst={cur_worst:.3f} @ {cur_wdp:.3f} mbar")
+    L.append(f"              L_inf:  mean={inf_mean:.3f}, worst={inf_worst:.3f} @ {inf_wdp:.3f} mbar")
+    L.append(f"    Alternatives — Tangent@mid: m={m_tan:.4f}  c={c_tan:.4f}  (worst={tan_worst:.3f})")
+    L.append(f"                   Secant:      m={m_sec:.4f}  c={c_sec:.4f}  (worst={sec_worst:.3f})")
+    L.append(f"                   L2:          m={m_l2:.4f}  c={c_l2:.4f}    (worst={l2_worst:.3f})")
     if cross_rec is not None:
         L.append(f"  • Proposed crossover (820 = UIC): DP ≈ {cross_rec:.3f} mbar")
     return _fig_text("Summary", L)
