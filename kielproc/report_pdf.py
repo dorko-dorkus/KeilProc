@@ -167,8 +167,30 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     L: list[str] = []
     L.append("Summary")
     L.append("───────")
-    L.append(f"Season: {season or 'n/a'}   Calibration: K(UIC)={K if K is not None else 'n/a'}   m(820)={m if m is not None else 'n/a'}   c(820)={c if c is not None else 'n/a'}")
+    # Include K units explicitly: t/h per √mbar
+    Ktxt = f"{K:.4f} t/h per √mbar" if isinstance(K, (int, float)) else "n/a"
+    L.append(
+        "Season: {}   Calibration: K(UIC)={}   m(820)={}   c(820)={}".format(
+            season or "n/a",
+            Ktxt,
+            m if m is not None else "n/a",
+            c if c is not None else "n/a",
+        )
+    )
     L.append(f"Barometric pressure: {baro_line}")
+    # Temperature & density (if present)
+    T_K_val = s.get("T_K")
+    rho_val = s.get("rho_kg_m3")
+    rho_src = s.get("rho_source")
+    if isinstance(T_K_val, (int, float)):
+        L.append(f"Process temperature: {T_K_val:.2f} K ({T_K_val-273.15:.1f} °C)")
+    if isinstance(rho_val, (int, float)):
+        line = f"ρ used: {rho_val:.4f} kg/m³"
+        if rho_src:
+            line += f"  [{rho_src}]"
+        if rho_val < 0.2 or rho_val > 2.0:
+            line += "  (WARNING: implausible — check baro/T units)"
+        L.append(line)
     if n > 0:
         L.append(f"Overlay (Piccolo-derived DP): n={n}   DP band: {dp_min:.3f}–{dp_max:.3f} mbar   820−UIC mean|Δ|={mean_abs_err:.3f} t/h   worst|Δ|={worst_abs_err:.3f} t/h")
         L.append("Piccolo mapping:")
