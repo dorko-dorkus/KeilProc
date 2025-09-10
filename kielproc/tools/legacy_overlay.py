@@ -273,9 +273,84 @@ def extract_temperature_from_workbook(xlsx_path: Path) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
+def extract_process_temperature_from_workbook(xlsx_path: Path) -> dict:
+    """Extract PRIMARY AIR / PROCESS temperature in °C (convert to K).
+
+    Heuristics
+    ---------
+    * Scan the first ~200 rows of the ``Data`` sheet for a unit cell
+      indicating Celsius (``C``, ``°C``, ``degC``, ``deg C``) with a numeric
+      value nearby.
+    * Prefer rows whose label mentions any of
+      ``['primary air', 'pa', 'process', 'mill', 'duct', 'gas']``.
+    * If multiple candidates exist, prefer temperatures ``> 80°C`` to avoid
+      picking ambient values, otherwise choose the hottest.
+
+    Returns
+    -------
+    dict
+        ``{"status":"ok","T_K": float, "cell": "Data!I.."}`` when a value
+        is found, ``{"status":"absent"}`` when no suitable row is located,
+        or ``{"status":"error", "error": str}`` on failure.
+    """
+
+    try:
+        wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
+        if "Data" not in wb.sheetnames:
+            return {"status": "absent"}
+        ws = wb["Data"]
+        rows = list(
+            ws.iter_rows(min_row=1, max_row=200, min_col=1, max_col=12, values_only=True)
+        )
+        cand = []
+        for ridx, row in enumerate(rows, start=1):
+            for cidx, val in enumerate(row):
+                unit = str(val).strip().lower() if val is not None else ""
+                if unit in ("c", "°c", "degc", "deg c"):
+                    v = None
+                    vcol = None
+                    if cidx + 1 < len(row) and isinstance(row[cidx + 1], (int, float)):
+                        v = float(row[cidx + 1])
+                        vcol = cidx + 1
+                    else:
+                        for j, x in enumerate(row):
+                            if isinstance(x, (int, float)):
+                                v = float(x)
+                                vcol = j
+                                break
+                    if v is None:
+                        continue
+                    label = " ".join([str(x) for x in row if isinstance(x, str)]).lower()
+                    score = 0
+                    for kw in ("primary air", " pa ", "process", "mill", "duct", "gas"):
+                        if kw in (" " + label + " "):
+                            score += 10
+                    if v >= 80.0:
+                        score += 5
+                    cand.append(
+                        {
+                            "score": score,
+                            "T_C": v,
+                            "cell": f"Data!{chr(65 + vcol)}{ridx}",
+                        }
+                    )
+        if not cand:
+            return {"status": "absent"}
+        cand.sort(key=lambda x: (x["score"], x["T_C"]))
+        best = cand[-1]
+        return {
+            "status": "ok",
+            "T_K": best["T_C"] + 273.15,
+            "cell": best["cell"],
+        }
+    except Exception as e:  # pragma: no cover - protective
+        return {"status": "error", "error": str(e)}
+
+
 __all__ = [
     "extract_piccolo_overlay_from_workbook",
     "extract_baro_from_workbook",
     "extract_temperature_from_workbook",
+    "extract_process_temperature_from_workbook",
     "extract_piccolo_range_and_avg_current",
 ]
