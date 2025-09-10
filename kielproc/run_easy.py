@@ -17,7 +17,10 @@ from .tools.legacy_overlay import (
     extract_piccolo_overlay_from_workbook,
     extract_baro_from_workbook,
     extract_piccolo_range_and_avg_current,
+    extract_temperature_from_workbook,
 )
+from .tools.venturi_builder import build_venturi_result
+from .physics import rho_from_pT
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +145,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     logger.info("Run start: input=%s output=%s glob=%s", cfg.input_dir, cfg.output_dir, cfg.file_glob)
     site = _resolve_site(cfg)
     baro_source: Dict[str, Any] = {"source": "gui_or_default"}
+    thermo_source: Dict[str, Any] = {"source": "absent"}
+    T_K: Optional[float] = None
     geom, r, beta, dims, As, At = _resolve_geometry(site)
     if dims is None:
         raise ValueError("Geometry required: provide duct width+height or duct area.")
@@ -183,6 +188,18 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
             }
         else:
             baro_source = {"source": "gui_or_default", "detail": _baro}
+
+        # Temperature from workbook (°C → K)
+        try:
+            _therm = extract_temperature_from_workbook(in_path)
+        except Exception as _e:  # pragma: no cover - defensive
+            _therm = {"status": "error", "error": str(_e)}
+        if _therm.get("status") == "ok" and _therm.get("T_K", 0) > 0:
+            T_K = float(_therm["T_K"])
+            thermo_source = {"source": "workbook", "cell": _therm.get("cell")}
+        else:
+            T_K = None
+            thermo_source = {"source": "absent", "detail": _therm}
     else:
         raise FileNotFoundError(
             f"Input path must be a folder of CSVs or an .xlsx workbook: {in_path}"
@@ -220,60 +237,45 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         except Exception:
             piccolo_overlay_csv = None
     
-    # ---------------------- Venturi mapping (optional) -----------------------
+    # ---------------------- Venturi curve with correct density --------------
     venturi = {}
-    try:
-        if (As is not None) and (At is not None) and (beta is not None) and (r is not None) and (r > 1.0):
+    venturi_path: Optional[Path] = None
+    rho_used: Optional[float] = None
+    if (beta is not None) and (As is not None) and baro_pa:
+        # If workbook didn't supply temp, try duct result mean temp
+        if T_K is None:
             duct = res.get("duct", {}) or {}
-            # Try to recover Qs (verification-plane volumetric flow, m^3/s)
-            Qs_candidates = [
-                duct.get("Qs_m3s"), duct.get("q_s_m3s"),
-                duct.get("Q_m3s"), duct.get("q_m3s"),
-                duct.get("volumetric_m3s"),
-            ]
-            Qs = next((x for x in Qs_candidates if isinstance(x, (int, float))), None)
-            # Fallback from mass flow if present
-            rho = duct.get("rho_kg_m3")
-            T_C = duct.get("temp_C_mean")
-            if rho is None:
-                # Ideal gas fallback for air: rho = P / (R T)
-                R = 287.05  # J/kg/K
-                T_K = (float(T_C) + 273.15) if isinstance(T_C, (int, float)) else 293.15
-                rho = baro_pa / (R * T_K)
-            if Qs is None and isinstance(duct.get("m_dot_kg_s"), (int, float)) and rho:
-                Qs = float(duct["m_dot_kg_s"]) / float(rho)
-
-            if isinstance(Qs, (int, float)) and Qs > 0:
-                # Venturi Δp using standard equation (low Mach), with an optional Cd
-                Cd = 0.98
-                if site and site.defaults and isinstance(site.defaults.get("venturi_Cd"), (int, float)):
-                    Cd = float(site.defaults["venturi_Cd"])
-                # Δp = (Q / (Cd*At))^2 * (ρ/2) * (1 - β^4)
-                dp_vent = (Qs / (Cd * At)) ** 2 * (rho / 2.0) * (1.0 - beta ** 4)
-                vt = Qs / At
-                # Build a small curve across the normalized flow range (10%..100%)
-                curve = []
-                for frac in [x/10 for x in range(1, 11)]:  # 0.1..1.0
-                    Q = Qs * frac
-                    dp = (Q / (Cd * At)) ** 2 * (rho / 2.0) * (1.0 - beta ** 4)
-                    curve.append({"frac_of_Qs": frac, "Q_m3s": Q, "dp_vent_Pa": dp})
-                venturi = {
-                    "As_m2": As, "At_m2": At, "beta": beta, "r": r,
-                    "rho_kg_m3": rho, "Qs_m3s": Qs, "vt_m_s": vt,
-                    "Cd": Cd, "dp_vent_Pa_at_Qs": dp_vent, "curve": curve,
-                }
-                (outdir / "venturi_result.json").write_text(json.dumps(venturi, indent=2))
-                # Write curve CSV for quick plotting
+            if isinstance(duct.get("temp_K_mean"), (int, float)):
+                T_K = float(duct.get("temp_K_mean"))
+                thermo_source = {"source": "duct_result", "key": "temp_K_mean"}
+            elif isinstance(duct.get("temp_C_mean"), (int, float)):
+                T_K = float(duct.get("temp_C_mean")) + 273.15
+                thermo_source = {"source": "duct_result", "key": "temp_C_mean"}
+        if T_K is None:
+            pp = res.get("per_port")
+            if pp is not None:
                 try:
-                    import csv
-                    with (outdir / "venturi_curve.csv").open("w", newline="") as f:
-                        w = csv.DictWriter(f, fieldnames=["frac_of_Qs","Q_m3s","dp_vent_Pa"])
-                        w.writeheader()
-                        w.writerows(curve)
+                    col = "T_C_mean"
+                    if col in pp.columns:
+                        T_K = float(pp[col].mean()) + 273.15
+                        thermo_source = {"source": "per_port", "column": col}
                 except Exception:
                     pass
-    except Exception as e:
-        venturi = {"error": str(e)}
+        try:
+            if T_K and T_K > 0:
+                rho_used = float(rho_from_pT(baro_pa, T_K))
+                venturi_path = build_venturi_result(
+                    outdir,
+                    beta=beta,
+                    area_As_m2=As,
+                    baro_pa=baro_pa,
+                    T_K=T_K,
+                    m_dot_hint_kg_s=(res.get("duct", {}) or {}).get("m_dot_kg_s"),
+                )
+                if venturi_path:
+                    venturi = json.loads(Path(venturi_path).read_text())
+        except Exception as _e:  # pragma: no cover - defensive
+            logger.warning("Venturi curve build skipped: %s", _e)
     # Optional transmitter setpoints
     sp_csv = cfg.setpoints_csv or (site.defaults.get("setpoints_csv") if site and site.defaults else None)
     # Use the extracted overlay (workbook mode) by default
@@ -316,6 +318,9 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "site_name": site.name,
         "r": r,
         "beta": beta,
+        "thermo_source": thermo_source,
+        "T_K": T_K,
+        "rho_kg_m3": rho_used,
         "input_mode": input_mode,
         "prepared_input_dir": str(prepared_dir),
         "per_port_csv": str(outdir / "per_port.csv"),
@@ -328,7 +333,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         },
         "setpoints": sp,
         "flow_lookup": flow_lookup,
-        "venturi_result_json": (str(outdir / "venturi_result.json") if venturi else None),
+        "venturi_result_json": (str(venturi_path) if venturi_path else None),
     }
     (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
 

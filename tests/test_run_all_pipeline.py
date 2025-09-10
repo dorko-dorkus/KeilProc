@@ -59,8 +59,9 @@ def test_run_all_produces_outputs(tmp_path):
     vr = Path(summary["venturi_result_json"])
     assert vr.exists()
     data = json.loads(vr.read_text())
-    assert len(data["curve"]) == 10
-    assert data["dp_vent_Pa_at_Qs"] > 0
+    assert len(data["flow_kg_s"]) > 10
+    assert len(data["dp_pa"]) == len(data["flow_kg_s"])
+    assert data["rho_kg_m3"] > 0
 
 
 def test_run_all_accepts_workbook(tmp_path):
