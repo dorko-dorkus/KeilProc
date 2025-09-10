@@ -97,10 +97,10 @@ def test_run_all_accepts_workbook(tmp_path):
     assert prepared.exists()
     # per-port CSV generated from workbook and consumed
     assert Path(summary["per_port_csv"]).exists()
-    # Flow lookup reference generated even without logger CSV
+    # Flow lookup reference uses the extracted overlay
     meta = summary["flow_lookup"]
     assert Path(meta["reference_csv"]).exists()
-    assert meta["overlay_csv"] is None
+    assert Path(meta["overlay_csv"]).exists()
     picc = summary["piccolo_overlay"]
     assert picc["status"] == "ok"
     csv = Path(picc["csv"])
