@@ -13,6 +13,7 @@ from .transmitter import compute_and_write_setpoints, TxParams
 from .transmitter_flow import write_lookup_outputs
 from .report_pdf import build_run_report_pdf
 from .tools.legacy_parser import parse_legacy_workbook
+from .tools.legacy_overlay import extract_piccolo_overlay_from_workbook
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +178,17 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     (outdir / "per_port.csv").write_text(res["per_port"].to_csv(index=False))
     (outdir / "duct_result.json").write_text(json.dumps(res.get("duct", {}), indent=2))
     (outdir / "normalize_meta.json").write_text(json.dumps(res.get("normalize_meta", {}), indent=2))
-
+    piccolo_overlay = {}
+    if input_mode == "legacy_workbook":
+        try:
+            piccolo_overlay = extract_piccolo_overlay_from_workbook(in_path, outdir / "piccolo_overlay.csv")
+            if piccolo_overlay.get("status") == "ok":
+                piccolo_overlay["csv"] = str(outdir / "piccolo_overlay.csv")
+            else:
+                piccolo_overlay["csv"] = None
+        except Exception as e:
+            piccolo_overlay = {"status": "error", "error": str(e), "csv": None}
+    
     # ---------------------- Venturi mapping (optional) -----------------------
     venturi = {}
     try:
@@ -274,6 +285,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "per_port_csv": str(outdir / "per_port.csv"),
         "duct_result_json": str(outdir / "duct_result.json"),
         "normalize_meta_json": str(outdir / "normalize_meta.json"),
+        "piccolo_overlay": piccolo_overlay,
         "setpoints": sp,
         "flow_lookup": flow_lookup,
         "venturi_result_json": (str(outdir / "venturi_result.json") if venturi else None),

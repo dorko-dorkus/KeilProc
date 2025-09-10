@@ -69,9 +69,11 @@ def test_run_all_accepts_workbook(tmp_path):
     out_dir.mkdir()
 
     # Build workbook with blank unit row
-    cols = ["Time", "Static Pressure", "Velocity Pressure", "Temperature", "Piccolo"]
-    data = [[0, 101325, 10, 25, 0.1], [1, 101300, 12, 26, 0.2]]
-    pd.DataFrame(data, columns=cols).to_excel(wb_path, sheet_name="P1", index=False)
+    cols = ["Time", "Static Pressure", "Velocity Pressure", "Temperature", "Piccolo", "Piccolo Tx Current"]
+    data = [[0, 101325, 10, 25, 0.1, 8.0], [1, 101300, 12, 26, 0.2, 12.0]]
+    with pd.ExcelWriter(wb_path, engine="openpyxl") as writer:
+        pd.DataFrame(data, columns=cols).to_excel(writer, sheet_name="P1", index=False)
+        pd.DataFrame([["Piccolo Tx Range Setting", 6.7]]).to_excel(writer, sheet_name="Data", index=False, header=False)
     from openpyxl import load_workbook
 
     wb = load_workbook(wb_path)
@@ -99,3 +101,10 @@ def test_run_all_accepts_workbook(tmp_path):
     meta = summary["flow_lookup"]
     assert Path(meta["reference_csv"]).exists()
     assert meta["overlay_csv"] is None
+    picc = summary["piccolo_overlay"]
+    assert picc["status"] == "ok"
+    csv = Path(picc["csv"])
+    assert csv.exists()
+    dfp = pd.read_csv(csv)
+    assert abs(dfp["DP_mbar"].iloc[0] - ( (8.0 - 4.0)/16.0 * 6.7 )) < 1e-6
+    assert abs(dfp["DP_mbar"].iloc[1] - ( (12.0 - 4.0)/16.0 * 6.7 )) < 1e-6
