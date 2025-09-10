@@ -278,7 +278,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 if venturi_path:
                     venturi = json.loads(Path(venturi_path).read_text())
                 # Recompute duct totals so v̄, Q, m_dot match this rho
-                recompute_duct_result_with_rho(outdir, rho_used)
+                recompute_duct_result_with_rho(outdir, rho_used, r_area_ratio=r)
         except Exception as _e:  # pragma: no cover - defensive
             logger.warning("Venturi curve build skipped: %s", _e)
     # Optional transmitter setpoints
@@ -399,7 +399,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "thermo_source": thermo_source,
         "T_K": T_K,
         "rho_kg_m3": rho_used,
-        "rho_source": "ideal_gas_pT" if rho_used else "unknown",
+        "rho_source": "ideal_gas_pT_plane_static" if rho_used else "unknown",
         # audit / repro metadata
         "inputs_manifest": input_manifest,
         "acceptance": acceptance,
