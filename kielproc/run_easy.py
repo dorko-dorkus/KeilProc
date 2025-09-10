@@ -13,7 +13,10 @@ from .transmitter import compute_and_write_setpoints, TxParams
 from .transmitter_flow import write_lookup_outputs
 from .report_pdf import build_run_report_pdf
 from .tools.legacy_parser import parse_legacy_workbook
-from .tools.legacy_overlay import extract_piccolo_overlay_from_workbook
+from .tools.legacy_overlay import (
+    extract_piccolo_overlay_from_workbook,
+    extract_baro_from_workbook,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +141,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     logger.info("Run start: input=%s output=%s glob=%s", cfg.input_dir, cfg.output_dir, cfg.file_glob)
     site = _resolve_site(cfg)
     baro_pa = _resolve_baro(cfg)
+    baro_meta: Dict[str, Any] = {"status": "cli"}
     geom, r, beta, dims, As, At = _resolve_geometry(site)
     if dims is None:
         raise ValueError("Geometry required: provide duct width+height or duct area.")
@@ -159,6 +163,12 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         # writes per-port CSVs + summary.json into prepared_dir
         parse_legacy_workbook(in_path, out_dir=prepared_dir, return_mode="files")
         input_mode = "legacy_workbook"
+        try:
+            baro_meta = extract_baro_from_workbook(in_path)
+            if baro_meta.get("status") == "ok":
+                baro_pa = float(baro_meta.get("baro_pa", baro_pa))
+        except Exception as e:  # pragma: no cover - defensive
+            baro_meta = {"status": "error", "error": str(e)}
     else:
         raise FileNotFoundError(
             f"Input path must be a folder of CSVs or an .xlsx workbook: {in_path}"
@@ -284,6 +294,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
 
     summary = {
         "baro_pa": baro_pa,
+        "baro": baro_meta,
         "site_name": site.name,
         "r": r,
         "beta": beta,
