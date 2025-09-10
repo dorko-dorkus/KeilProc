@@ -17,10 +17,10 @@ from .tools.legacy_overlay import (
     extract_piccolo_overlay_from_workbook,
     extract_baro_from_workbook,
     extract_piccolo_range_and_avg_current,
-    extract_temperature_from_workbook,
+    extract_process_temperature_from_workbook,
 )
 from .tools.venturi_builder import build_venturi_result
-from .physics import rho_from_pT
+from .tools.recalc import recompute_duct_result_with_rho
 
 logger = logging.getLogger(__name__)
 
@@ -189,15 +189,16 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         else:
             baro_source = {"source": "gui_or_default", "detail": _baro}
 
-        # Temperature from workbook (°C → K)
+        # Process temperature from workbook (°C → K)
         try:
-            _therm = extract_temperature_from_workbook(in_path)
+            _therm = extract_process_temperature_from_workbook(in_path)
         except Exception as _e:  # pragma: no cover - defensive
             _therm = {"status": "error", "error": str(_e)}
         if _therm.get("status") == "ok" and _therm.get("T_K", 0) > 0:
             T_K = float(_therm["T_K"])
             thermo_source = {"source": "workbook", "cell": _therm.get("cell")}
         else:
+            # Fallback: no workbook temp — leave unset and let downstream decide
             T_K = None
             thermo_source = {"source": "absent", "detail": _therm}
     else:
@@ -237,7 +238,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         except Exception:
             piccolo_overlay_csv = None
     
-    # ---------------------- Venturi curve with correct density --------------
+    # --- Use PA temperature for density; build Venturi curve; recompute duct totals coherently ---
     venturi = {}
     venturi_path: Optional[Path] = None
     rho_used: Optional[float] = None
@@ -263,7 +264,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                     pass
         try:
             if T_K and T_K > 0:
-                rho_used = float(rho_from_pT(baro_pa, T_K))
+                # Ideal-gas density
+                rho_used = float(baro_pa) / (287.05 * float(T_K))
                 venturi_path = build_venturi_result(
                     outdir,
                     beta=beta,
@@ -274,6 +276,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 )
                 if venturi_path:
                     venturi = json.loads(Path(venturi_path).read_text())
+                # Recompute duct totals so v̄, Q, m_dot match this rho
+                recompute_duct_result_with_rho(outdir, rho_used)
         except Exception as _e:  # pragma: no cover - defensive
             logger.warning("Venturi curve build skipped: %s", _e)
     # Optional transmitter setpoints
@@ -321,6 +325,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "thermo_source": thermo_source,
         "T_K": T_K,
         "rho_kg_m3": rho_used,
+        "rho_source": "ideal_gas_pT" if rho_used else "unknown",
         "input_mode": input_mode,
         "prepared_input_dir": str(prepared_dir),
         "per_port_csv": str(outdir / "per_port.csv"),
