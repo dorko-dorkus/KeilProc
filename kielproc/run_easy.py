@@ -6,8 +6,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
-import logging, json, math
+import json, math, logging
 import hashlib, time, os
+import pandas as pd
 from .aggregate import RunConfig as IntegratorConfig, integrate_run
 from .geometry import Geometry, r_ratio, beta_from_geometry, duct_area
 from .transmitter import compute_and_write_setpoints, TxParams
@@ -239,11 +240,19 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         except Exception:
             piccolo_overlay_csv = None
     
-    # --- Use PA temperature for density; build Venturi curve; recompute duct totals coherently ---
+    # --- Use plane static for density; build Venturi curve; recompute duct totals coherently ---
     venturi = {}
     venturi_path: Optional[Path] = None
     rho_used: Optional[float] = None
-    if (beta is not None) and (As is not None) and baro_pa:
+    # plane static mean from per_port (preferred)
+    p_s_mean = None
+    try:
+        pp = pd.read_csv(outdir / "per_port.csv")
+        if "p_s_pa" in pp.columns:
+            p_s_mean = float(pd.to_numeric(pp["p_s_pa"], errors="coerce").dropna().mean())
+    except Exception:
+        p_s_mean = None
+    if (beta is not None) and (As is not None) and (p_s_mean or baro_pa):
         # If workbook didn't supply temp, try duct result mean temp
         if T_K is None:
             duct = res.get("duct", {}) or {}
@@ -265,20 +274,22 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                     pass
         try:
             if T_K and T_K > 0:
-                # Ideal-gas density
-                rho_used = float(baro_pa) / (287.05 * float(T_K))
+                # Ideal-gas density at traverse plane (prefer plane static)
+                P_use = float(p_s_mean) if p_s_mean else float(baro_pa)
+                rho_used = P_use / (287.05 * float(T_K))
                 venturi_path = build_venturi_result(
                     outdir,
                     beta=beta,
                     area_As_m2=As,
-                    baro_pa=baro_pa,
+                    baro_pa=P_use,
                     T_K=T_K,
                     m_dot_hint_kg_s=(res.get("duct", {}) or {}).get("m_dot_kg_s"),
                 )
                 if venturi_path:
                     venturi = json.loads(Path(venturi_path).read_text())
-                # Recompute duct totals so v̄, Q, m_dot match this rho
-                recompute_duct_result_with_rho(outdir, rho_used, r_area_ratio=r)
+                # Recompute duct totals so v̄, Q, m_dot match this rho; pass r (A_s/A_t)
+                r_ar = (1.0 / (beta * beta)) if beta else None
+                recompute_duct_result_with_rho(outdir, rho_used, r_area_ratio=r_ar)
         except Exception as _e:  # pragma: no cover - defensive
             logger.warning("Venturi curve build skipped: %s", _e)
     # Optional transmitter setpoints
@@ -399,7 +410,10 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "thermo_source": thermo_source,
         "T_K": T_K,
         "rho_kg_m3": rho_used,
-        "rho_source": "ideal_gas_pT_plane_static" if rho_used else "unknown",
+        "rho_source": (
+            "ideal_gas_pT_plane_static" if (rho_used and p_s_mean) else
+            "ideal_gas_pT_baro" if rho_used else "unknown"
+        ),
         # audit / repro metadata
         "inputs_manifest": input_manifest,
         "acceptance": acceptance,
