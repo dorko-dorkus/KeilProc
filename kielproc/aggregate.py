@@ -212,7 +212,6 @@ def _normalize_df(df_raw: pd.DataFrame, baro_cli_pa: float | None):
 
     vp_unit = _infer_unit_from_name(vp_col, "Pa")
     t_unit  = _infer_unit_from_name(t_col, "C")
-    st_unit = _infer_unit_from_name(st_col, "Pa") if st_col else None
     bar_unit= _infer_unit_from_name(bar_col, "Pa") if bar_col else None
 
     out = pd.DataFrame()
@@ -223,31 +222,45 @@ def _normalize_df(df_raw: pd.DataFrame, baro_cli_pa: float | None):
     if "Replicate" in df.columns:
         out["Replicate"] = pd.to_numeric(df["Replicate"], errors="coerce").fillna(method="ffill").fillna(0).astype(int)
 
-    # Absolute static: must exist or be reconstructable
-    static_abs = None
-    if st_col:
-        st_series = _coerce("Static", df[st_col], st_unit or "Pa")
-        # If the header suggests gauge (contains 'gauge' or '_g'), add barometric
-        header_says_gauge = bool(re.search(r"gauge|\b_g\b", st_col, flags=re.I))
-        if header_says_gauge:
+    # Absolute static: prefer explicit absolute column, otherwise add barometric to gauge
+    cols = {c.lower(): c for c in df.columns}
+    def _col(name: str) -> pd.Series:
+        return _coerce("Static", df[name], _infer_unit_from_name(name, "Pa"))
+
+    static_abs: pd.Series
+    p_src: str
+    st_src: str | None = None
+    if "static_abs_pa" in cols:
+        st_src = cols["static_abs_pa"]
+        raw_abs = _col(st_src)
+        if np.nanmedian(raw_abs.to_numpy(float)) >= 8.0e4:
+            static_abs = raw_abs
+            p_src = "Static_abs_pa_column"
+        else:
             if bar_col:
                 baro = _coerce("Static", df[bar_col], bar_unit or "Pa")
             elif baro_cli_pa is not None:
-                baro = pd.Series(baro_cli_pa, index=st_series.index, dtype=float)
+                baro = pd.Series(baro_cli_pa, index=raw_abs.index, dtype=float)
             else:
-                raise ValueError("Gauge static supplied without barometric (column or --baro)")
-            static_abs = st_series + baro
-            p_src = "Static_gauge_plus_baro" if bar_col else "cli_baro_plus_gauge"
-        else:
-            # treat as absolute by contract
-            static_abs = st_series
-            p_src = "Static_absolute_column"
-    elif baro_cli_pa is not None:
-        # No static column → not allowed; we require static per the SoT
-        raise ValueError("Static is required per-sample; provide Static (absolute) or Static_gauge + Baro")
+                raise ValueError("Static_abs_pa present but <80 kPa and no baro_pa to correct it")
+            static_abs = raw_abs + baro
+            p_src = "Static_abs_pa_TOO_SMALL_treated_as_gauge_plus_baro"
     else:
-        raise ValueError("Static is required per-sample; provide Static (absolute) or Static_gauge + Baro")
+        st_key = next((cols[k] for k in ("static_gauge_pa", "static_pa", "static") if k in cols), None)
+        if st_key is None:
+            raise KeyError("No static pressure column found (expected Static_abs_pa or Static[_gauge]_pa)")
+        st_src = st_key
+        static_g = _col(st_src).fillna(0.0)
+        if bar_col:
+            baro = _coerce("Static", df[bar_col], bar_unit or "Pa")
+        elif baro_cli_pa is not None:
+            baro = pd.Series(baro_cli_pa, index=static_g.index, dtype=float)
+        else:
+            raise ValueError("Barometric pressure required to reconstruct absolute plane static")
+        static_abs = static_g + baro
+        p_src = "Static_gauge_plus_baro"
 
+    st_unit = _infer_unit_from_name(st_src, "Pa") if st_src else None
     out["Static_abs_Pa"] = static_abs
     meta = {
         "method": "repo_unify_schema" if cand is not None else "aliases_units",
@@ -256,6 +269,7 @@ def _normalize_df(df_raw: pd.DataFrame, baro_cli_pa: float | None):
         "static_unit": st_unit,
         "baro_unit": bar_unit,
         "p_abs_source": p_src,
+        "baro_pa_used": float(baro_cli_pa) if baro_cli_pa is not None else None,
     }
     return out, meta
 
