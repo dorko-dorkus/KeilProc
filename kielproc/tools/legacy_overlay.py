@@ -125,6 +125,67 @@ def extract_piccolo_overlay_from_workbook(xlsx_path: Path, out_csv: Path) -> Dic
     return {"status": "no_dp_found", "source": None, "rows": 0}
 
 
+# ---- Helper: Piccolo range and average Tx current from Data sheet ----
+def extract_piccolo_range_and_avg_current(xlsx_path: Path) -> Dict[str, Any]:
+    """Scrape piccolo range and average transmit current from the Data sheet.
+
+    The function searches the ``Data`` worksheet for rows containing the
+    labels ``Piccolo Tx Range`` and ``Average Piccolo Tx Current``.  Units are
+    normalised to mbar for the range and mA for the current.  If the sheet is
+    absent or the values cannot be located, ``None`` is returned for the
+    corresponding fields.
+
+    Returns
+    -------
+    dict
+        ``{"status": "...", "range_mbar": float|None, "avg_current_mA": float|None}``
+    """
+
+    try:
+        wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
+        if "Data" not in wb.sheetnames:
+            return {"status": "absent", "range_mbar": None, "avg_current_mA": None}
+
+        ws = wb["Data"]
+        rng = None
+        avg_i = None
+
+        # Scan the first ~200 rows for the two labels
+        rows = list(ws.values)[:200]
+        for r in rows:
+            vals = [str(v).strip() if v is not None else "" for v in r]
+            line = " ".join(vals).lower()
+
+            if "piccolo tx range" in line:
+                for v in r:
+                    if isinstance(v, (int, float)):
+                        rng = float(v)
+                        break
+                unit = next(
+                    (s for s in vals if s.lower() in ("mbar", "kpa", "pa", "mb")),
+                    "mbar",
+                ).lower()
+                if unit == "kpa":
+                    rng = rng * 10.0  # 1 kPa = 10 mbar
+                if unit == "pa":
+                    rng = rng / 100.0  # 100 Pa = 1 mbar
+
+            if "average piccolo tx current" in line:
+                for v in r:
+                    if isinstance(v, (int, float)):
+                        avg_i = float(v)
+                        break
+
+        return {"status": "ok", "range_mbar": rng, "avg_current_mA": avg_i}
+    except Exception as e:  # pragma: no cover - protective
+        return {
+            "status": "error",
+            "error": str(e),
+            "range_mbar": None,
+            "avg_current_mA": None,
+        }
+
+
 # --- NEW: extract barometric pressure (Data!H15:I19) with units ---
 def extract_baro_from_workbook(xlsx_path: Path) -> Dict[str, Any]:
     """
@@ -174,4 +235,8 @@ def extract_baro_from_workbook(xlsx_path: Path) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
-__all__ = ["extract_piccolo_overlay_from_workbook", "extract_baro_from_workbook"]
+__all__ = [
+    "extract_piccolo_overlay_from_workbook",
+    "extract_baro_from_workbook",
+    "extract_piccolo_range_and_avg_current",
+]
