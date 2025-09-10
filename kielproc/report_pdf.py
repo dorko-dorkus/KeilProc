@@ -1,6 +1,6 @@
 from __future__ import annotations
 from matplotlib.backends.backend_pdf import PdfPages
-import json, math
+import json, math, textwrap
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,90 +13,29 @@ def _load_json(p: Path) -> dict:
         return json.loads(Path(p).read_text())
     except Exception:
         return {}
-
-
-def _safe_float(x):
-    try:
-        return float(x)
-    except Exception:
-        return None
-
-
-def _fit_linear_L2(x: np.ndarray, y: np.ndarray, w: np.ndarray | None = None) -> tuple[float, float]:
-    """Least-squares fit of y ≈ m*x + c (optionally weighted)."""
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
-    if w is None:
-        w = np.ones_like(x)
-    w = np.asarray(w, dtype=float)
-    mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(w)
-    x = x[mask]
-    y = y[mask]
-    w = w[mask]
-    if x.size < 2:
-        xm = float(np.nanmedian(x)) if x.size else 1.0
-        ym = float(np.nanmedian(y)) if y.size else 0.0
-        m = 0.0 if xm <= 0 else (ym / (2.0 * xm))
-        c = ym - m * xm
-        return (m, c)
-    Sw = float(np.sum(w))
-    Sx = float(np.sum(w * x))
-    Sy = float(np.sum(w * y))
-    Sxx = float(np.sum(w * x * x))
-    Sxy = float(np.sum(w * x * y))
-    denom = Sw * Sxx - Sx * Sx
-    if abs(denom) < 1e-12:
-        xm = float(np.average(x, weights=w))
-        ym = float(np.average(y, weights=w))
-        m = 0.0 if xm <= 0 else (ym / (2.0 * xm))
-        c = ym - m * xm
-        return (m, c)
-    m = (Sw * Sxy - Sx * Sy) / denom
-    c = (Sy - m * Sx) / Sw
-    m = float(max(m, 0.0))
-    c = float(max(c, 0.0))
-    return (m, c)
-
-
-def _compute_errors_over_band(K: float, m: float, c: float, dp_lo: float, dp_hi: float, n: int = 400) -> dict:
-    """Compute mean|Δ| and worst|Δ| between 820 (m*dp+c) and UIC (K√dp) across a uniform DP grid."""
-    grid = np.linspace(max(0.0, dp_lo), max(dp_lo, dp_hi), num=max(2, n))
-    y_uic = K * np.sqrt(np.clip(grid, 0.0, None))
-    y_820 = m * grid + c
-    err = y_820 - y_uic
-    return {
-        "mean_abs": float(np.nanmean(np.abs(err))),
-        "worst_abs": float(np.nanmax(np.abs(err))),
-        "dp_at_worst": float(grid[int(np.nanargmax(np.abs(err)))]),
-    }
-
-
-def _solve_crossover(K: float, m: float, c: float) -> float | None:
-    """Solve m*dp + c = K√dp for dp>0."""
-    try:
-        A = m * m
-        B = 2 * m * c - K * K
-        Cq = c * c
-        disc = B * B - 4 * A * Cq
-        if disc < 0:
-            return None
-        r1 = (-B + math.sqrt(disc)) / (2 * A)
-        r2 = (-B - math.sqrt(disc)) / (2 * A)
-        for r in (r1, r2):
-            if r and r > 0:
-                return float(r)
-    except Exception:
-        return None
-    return None
-
-
 def _fig_text_page(title: str, blocks: list[list[str]]) -> plt.Figure:
+    """
+    Render a text-only page. `blocks` is a list of paragraphs (each is list of lines).
+    """
     fig = plt.figure(figsize=(8.27, 11.69))  # A4 portrait
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.axis("off")
-    ax.set_title(title, loc="left")
-    text = "\n\n".join("\n".join(b) for b in blocks)
-    ax.text(0.03, 0.97, text, va="top", ha="left", fontsize=11, family="monospace")
+    ax = fig.add_axes([0,0,1,1]); ax.axis("off")
+    y = 0.94
+    ax.text(0.08, y, title, va="top", ha="left", fontsize=14, weight="bold")
+    y -= 0.036
+    # wrap long lines to avoid spillover at ~95 monospace chars
+    def _wrap_para(lines, width=95):
+        out = []
+        for ln in lines:
+            out.extend(textwrap.fill(ln, width=width).split("\n"))
+        return out
+    for para in blocks:
+        wrapped = _wrap_para(para)
+        txt = "\n".join(wrapped)
+        ax.text(0.08, y, txt, va="top", ha="left", fontsize=10, family="monospace")
+        # line height tuned for monospace 10pt
+        y -= 0.032 + 0.014*max(1, txt.count("\n")+1)
+        if y < 0.08:
+            break
     return fig
 
 
@@ -140,181 +79,152 @@ def _fig_cover(outdir: Path, summary_path: Path) -> plt.Figure:
     return fig
 
 
-def _exec_summary(outdir: Path, summary_path: Path) -> plt.Figure:
+def _summary_page(outdir: Path, summary_path: Path) -> plt.Figure:
+    """Single-page: Summary + Context & Method + Recommendations (compact)."""
     s = _load_json(summary_path)
-    blocks: list[list[str]] = []
-    if s:
-        blocks.append([
-            "Executive Summary",
-            "─────────────────",
-            f"Site: {s.get('site_name','')}",
-            f"Input mode: {s.get('input_mode','')}",
-        ])
-    else:
-        blocks.append(["Executive Summary", "─────────────────", "No summary available."])
-
-    # Overlay stats (from combined or overlay csv)
     meta = _load_json(Path(outdir) / "transmitter_lookup_meta.json")
-    overlay_csv = meta.get("combined_csv") or meta.get("overlay_csv")
-    n = 0; dp_min = dp_max = None; mean_abs_err = worst_abs_err = 0.0
+
+    # Calibration / season
+    season = meta.get("season", "")
+    cal = meta.get("calibration", {}) or {}
+    K = cal.get("K_uic", None); m = cal.get("m_820", None); c = cal.get("c_820", None)
+    baro = _load_json(summary_path).get("baro_pa", None)
+    baro_line = f"{baro:.0f} Pa" if isinstance(baro, (int,float)) else "n/a"
+
+    # ---------- Overlay stats ----------
+    overlay_csv = meta.get("overlay_csv")
+    n = 0; dp_min = dp_max = None; mean_abs_err = worst_abs_err = None
+    df = None
     if overlay_csv and Path(overlay_csv).exists():
         try:
-            df = pd.read_csv(Path(overlay_csv))
-            cand = None
-            for name in ["data_DP_mbar", "DP_mbar", "dp_mbar", "dp (mbar)", "dp", "i/p", "differential"]:
-                if name in df.columns:
-                    cand = name
-                    break
-            if cand is None:
-                for col in df.columns:
-                    sdp = pd.to_numeric(df[col], errors="coerce")
-                    if sdp.notna().sum() > 0:
-                        cand = col
-                        break
-            if cand:
-                dp_series = pd.to_numeric(df[cand], errors="coerce").dropna()
-                n = int(dp_series.size)
-                if n > 0:
-                    dp_min = float(dp_series.min()); dp_max = float(dp_series.max())
-                    if "data_Flow_err_820_minus_UIC_tph" in df.columns:
-                        err = pd.to_numeric(df["data_Flow_err_820_minus_UIC_tph"], errors="coerce")
-                    elif {"data_Flow_820_tph", "data_Flow_UIC_tph"}.issubset(df.columns):
-                        err = pd.to_numeric(df["data_Flow_820_tph"], errors="coerce") - pd.to_numeric(df["data_Flow_UIC_tph"], errors="coerce")
-                    elif {"Flow_820_tph", "Flow_UIC_tph"}.issubset(df.columns):
-                        err = pd.to_numeric(df["Flow_820_tph"], errors="coerce") - pd.to_numeric(df["Flow_UIC_tph"], errors="coerce")
-                    else:
-                        err = None
-                    if err is not None:
-                        mean_abs_err = float(np.nanmean(np.abs(err)))
-                        worst_abs_err = float(np.nanmax(np.abs(err)))
+            dd = pd.read_csv(Path(outdir) / "transmitter_lookup_combined.csv")
         except Exception:
-            pass
+            try:
+                dd = pd.read_csv(Path(overlay_csv))
+            except Exception:
+                dd = None
+        if isinstance(dd, pd.DataFrame) and {"data_DP_mbar","data_Flow_UIC_tph","data_Flow_820_tph"}.issubset(dd.columns):
+            df = dd.dropna(subset=["data_DP_mbar","data_Flow_UIC_tph","data_Flow_820_tph"])
+            if not df.empty:
+                n = int(df.shape[0])
+                dp_min = float(df["data_DP_mbar"].min())
+                dp_max = float(df["data_DP_mbar"].max())
+                err = (df["data_Flow_820_tph"] - df["data_Flow_UIC_tph"]).to_numpy()
+                mean_abs_err = float(np.nanmean(np.abs(err)))
+                worst_abs_err = float(np.nanmax(np.abs(err)))
 
+    # crossover DP (informative)
+    dp_cross = None
+    try:
+        if all(isinstance(v,(int,float)) for v in [K,m,c]) and K>0 and m>0:
+            A = (m*m); B = (2*m*c - K*K); Cq = (c*c)
+            disc = B*B - 4*A*Cq
+            if disc >= 0:
+                r1 = (-B + math.sqrt(disc)) / (2*A)
+                r2 = (-B - math.sqrt(disc)) / (2*A)
+                for r in (r1, r2):
+                    if r and r > 0: dp_cross = float(r); break
+    except Exception:
+        pass
+
+    # ---------- Recommendations (L2 over band) ----------
+    def _fit_linear_L2(x, y):
+        x = np.asarray(x, float); y = np.asarray(y, float)
+        if x.size < 2:  # degenerate safeguard
+            xm = float(np.nanmedian(x)) if x.size else 1.0
+            ym = float(np.nanmedian(y)) if y.size else 0.0
+            m_ = 0.0 if xm <= 0 else (ym/(2.0*xm)); c_ = ym - m_*xm
+            return float(max(m_,0.0)), float(max(c_,0.0))
+        X = np.c_[x, np.ones_like(x)]
+        m_, c_ = np.linalg.lstsq(X, y, rcond=None)[0]
+        return float(max(m_,0.0)), float(max(c_,0.0))
+
+    if n > 0 and df is not None:
+        lo = float(np.percentile(df["data_DP_mbar"], 5.0))
+        hi = float(np.percentile(df["data_DP_mbar"], 95.0))
+        if hi - lo < 0.1:
+            mid = 0.5*(lo+hi); lo = max(0.0, mid-0.25); hi = mid+0.25
+        fit_x = df["data_DP_mbar"].to_numpy()
+    else:
+        lo, hi = 2.0, 6.0
+        fit_x = np.linspace(lo, hi, 400)
+    y_uic_fit = (K or 0.0) * np.sqrt(np.clip(fit_x, 0.0, None))
+    m_rec, c_rec = _fit_linear_L2(fit_x, y_uic_fit)
+    def _band_err(K_, m_, c_, lo_, hi_):
+        gx = np.linspace(max(0.0, lo_), max(lo_, hi_), 400)
+        e = (m_*gx + c_) - (K_*np.sqrt(gx))
+        return float(np.nanmean(np.abs(e))), float(np.nanmax(np.abs(e))), float(gx[int(np.nanargmax(np.abs(e)))])
+    cur_mean, cur_worst, cur_wdp = _band_err(K or 0.0, m or 0.0, c or 0.0, lo, hi)
+    rec_mean, rec_worst, rec_wdp = _band_err(K or 0.0, m_rec, c_rec, lo, hi)
+    def _cross(K_, m_, c_):
+        try:
+            A = m_*m_; B = 2*m_*c_ - K_*K_; Cq = c_*c_
+            disc = B*B - 4*A*Cq
+            if disc < 0: return None
+            r1 = (-B + math.sqrt(disc))/(2*A); r2 = (-B - math.sqrt(disc))/(2*A)
+            for r in (r1, r2):
+                if r and r > 0: return float(r)
+        except Exception: return None
+        return None
+    dp_cross_rec = _cross(K or 0.0, m_rec, c_rec)
+
+    # ---------- Build one compact page ----------
+    blocks = []
+    blocks.append([
+        "Summary",
+        "───────",
+        f"Season: {season or 'n/a'}",
+        f"Calibration:  K (UIC) = {K if K is not None else 'n/a'}  |  m (820) = {m if m is not None else 'n/a'}  |  c (820) = {c if c is not None else 'n/a'}",
+        f"Barometric pressure: {baro_line}",
+    ])
     if n > 0:
-        # Piccolo range/avg current (for implied-current check)
+        # Piccolo mapping: break into multiple lines to avoid overflow
         s_all = _load_json(summary_path)
         pic = (s_all.get("piccolo_info") or {})
         rng = pic.get("range_mbar", None)
         avgI = pic.get("avg_current_mA", None)
-        impliedI = None
-        if rng and dp_min is not None and dp_max is not None and rng > 0:
-            I_lo = 4.0 + 16.0 * (dp_min / float(rng))
-            I_hi = 4.0 + 16.0 * (dp_max / float(rng))
-            impliedI = (I_lo, I_hi)
-        blocks.append([
+        lines = [
             "Overlay (Piccolo-derived DP):",
-            f"  Samples: n = {n}",
-            f"  DP band: {dp_min:.3f} – {dp_max:.3f} mbar",
-            f"  820 vs UIC error: mean |Δ| = {mean_abs_err:.3f} t/h, worst |Δ| = {worst_abs_err:.3f} t/h",
-        ])
-        line = []
-        if rng:   line.append(f"Range = {rng:.3f} mbar")
-        if avgI:  line.append(f"Avg I = {avgI:.4f} mA (workbook)")
-        if impliedI: line.append(f"Implied I from overlay = {impliedI[0]:.4f}–{impliedI[1]:.4f} mA")
-        if line: blocks.append(["Piccolo mapping: " + " | ".join(line)])
-
-    return _fig_text_page("Executive Summary", blocks)
-
-
-def _context_and_method(outdir: Path, summary_path: Path) -> plt.Figure:
-    blocks = [[
-        "Context & Method",
-        "────────────────",
-        "Comparison of UIC √DP vs 820 linear flow.",
-    ]]
-    return _fig_text_page("Context & Method", blocks)
-
-
-def _recommendations_page(outdir: Path, summary_path: Path) -> plt.Figure | None:
-    """
-    Recommend 820 gain/bias (m*, c*) to best track UIC = K√DP over the operating DP band.
-    Operating band:
-      • If overlay present: [P5, P95] of overlay DP (robust to outliers).
-      • Else: default [2, 6] mbar.
-    Fit: weighted least-squares (weights = 1 or overlay histogram density).
-    """
-    meta = _load_json(Path(outdir) / "transmitter_lookup_meta.json")
-    if not meta:
-        return None
-    cal = meta.get("calibration", {}) or {}
-    K = _safe_float(cal.get("K_uic"))
-    m0 = _safe_float(cal.get("m_820"))
-    c0 = _safe_float(cal.get("c_820"))
-    if not (K and K > 0):
-        return None
-
-    overlay_csv = meta.get("overlay_csv", None)
-    dp = None
-    if overlay_csv and Path(overlay_csv).exists():
-        try:
-            d = pd.read_csv(Path(overlay_csv))
-            cand = None
-            for name in ["DP_mbar", "dp_mbar", "dp (mbar)", "dp", "i/p", "differential", "data_DP_mbar"]:
-                if name in d.columns:
-                    cand = name
-                    break
-            if cand is None:
-                for col in d.columns:
-                    s = pd.to_numeric(d[col], errors="coerce")
-                    if s.notna().sum() > 0:
-                        cand = col
-                        break
-            if cand:
-                dp = pd.to_numeric(d[cand], errors="coerce").dropna().to_numpy()
-        except Exception:
-            dp = None
-
-    if dp is not None and dp.size >= 5:
-        lo = float(np.percentile(dp, 5.0))
-        hi = float(np.percentile(dp, 95.0))
-        if hi - lo < 0.1:
-            mid = 0.5 * (lo + hi)
-            lo = max(0.0, mid - 0.25)
-            hi = mid + 0.25
-        fit_x = dp
-        weights = None
+            f"  Samples: n = {n}   DP band: {dp_min:.3f}–{dp_max:.3f} mbar",
+            f"  820 vs UIC error: mean |Δ| = {mean_abs_err:.3f} t/h   |   worst |Δ| = {worst_abs_err:.3f} t/h",
+            "Piccolo mapping:",
+        ]
+        if rng is not None:  lines.append(f"  Range: {rng:.3f} mbar")
+        if avgI is not None: lines.append(f"  Average current (workbook): {avgI:.4f} mA")
+        if rng and dp_min is not None and dp_max is not None and rng > 0:
+            I_lo = 4.0 + 16.0*(dp_min/float(rng))
+            I_hi = 4.0 + 16.0*(dp_max/float(rng))
+            lines.append(f"  Implied current from overlay DP: {I_lo:.4f}–{I_hi:.4f} mA")
+        blocks.append(lines)
     else:
-        lo, hi = 2.0, 6.0
-        fit_x = np.linspace(lo, hi, 400)
-        weights = None
+        blocks.append(["Overlay: not present (reference curves only). "])
+    if dp_cross is not None:
+        blocks.append([f"Crossover (current 820=UIC): DP ≈ {dp_cross:.3f} mbar"])
 
-    y = K * np.sqrt(np.clip(fit_x, 0.0, None))
-    m_rec, c_rec = _fit_linear_L2(fit_x, y, w=weights)
+    # Context & Method (compact)
+    ctx = [
+        "Context & Method:",
+        "  • UIC (physics): Flow_UIC = K·√DP",
+        "  • 820 (linear):  Flow_820 = m·DP + c",
+        "  • Overlay DP from Piccolo 4–20 mA and workbook Range (mbar).",
+        "  • Baro from workbook Data!H15:I19 (kPa→Pa) when available.",
+        "  • Full plot shows DP 0–10 mbar; zoom focuses on your overlay band.",
+    ]
+    blocks.append(ctx)
 
-    cur = _compute_errors_over_band(K, m0 or 0.0, c0 or 0.0, lo, hi)
-    rec = _compute_errors_over_band(K, m_rec, c_rec, lo, hi)
-    dp_cross_cur = _solve_crossover(K, m0 or 0.0, c0 or 0.0)
-    dp_cross_rec = _solve_crossover(K, m_rec, c_rec)
-
-    blocks: list[list[str]] = []
-    blocks.append([
-        "Recommendations",
-        "───────────────",
-        f"Operating DP band used for fit: {lo:.3f} – {hi:.3f} mbar",
-        f"Current 820: m = {m0 if m0 is not None else 'n/a'}  |  c = {c0 if c0 is not None else 'n/a'}",
-        f"Recommended 820 (least-squares over band): m* = {m_rec:.4f}  |  c* = {c_rec:.4f}",
-        f"Δm = {((m_rec-(m0 or 0.0))):+.4f}   Δc = {((c_rec-(c0 or 0.0))):+.4f}",
-    ])
-    blocks.append([
-        "Expected tracking error over band (820 − UIC):",
-        f"  Current:   mean |Δ| = {cur['mean_abs']:.3f} t/h   |   worst |Δ| = {cur['worst_abs']:.3f} t/h @ DP ≈ {cur['dp_at_worst']:.3f} mbar",
-        f"  Proposed:  mean |Δ| = {rec['mean_abs']:.3f} t/h   |   worst |Δ| = {rec['worst_abs']:.3f} t/h @ DP ≈ {rec['dp_at_worst']:.3f} mbar",
-    ])
-    cross_line: list[str] = []
-    if dp_cross_cur is not None:
-        cross_line.append(f"Current crossover (820 = UIC): DP ≈ {dp_cross_cur:.3f} mbar")
+    # Recommendations (compact; L2 over operating band)
+    rec = [
+        "Recommendations (L2 fit over operating band):",
+        f"  Band used: {lo:.3f}–{hi:.3f} mbar",
+        f"  Current 820: m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}",
+        f"  Proposed 820: m*={m_rec:.4f}  c*={c_rec:.4f}   (Δm={((m_rec-(m or 0.0))):+.4f}  Δc={((c_rec-(c or 0.0))):+.4f})",
+        f"  Error over band — Current: mean|Δ|={cur_mean:.3f}  worst|Δ|={cur_worst:.3f}@{cur_wdp:.3f} mbar;  Proposed: mean|Δ|={rec_mean:.3f}  worst|Δ|={rec_worst:.3f}@{rec_wdp:.3f} mbar",
+    ]
     if dp_cross_rec is not None:
-        cross_line.append(f"Proposed crossover (820 = UIC): DP ≈ {dp_cross_rec:.3f} mbar")
-    if cross_line:
-        blocks.append(cross_line)
+        rec.append(f"  Proposed crossover (820=UIC): DP ≈ {dp_cross_rec:.3f} mbar")
+    blocks.append(rec)
 
-    blocks.append([
-        "Notes:",
-        "  • The recommendation optimizes average tracking (least-squares).",
-        "  • If you prefer to minimize worst-case error, set the band you care about tighter (e.g., interquartile DP) and re-run.",
-        "  • Re-program the 820 with (m*, c*) for the season shown on the cover.",
-    ])
-    return _fig_text_page("Recommendations", blocks)
+    return _fig_text_page("Summary", blocks)
 
 
 def _fig_per_port_table(per_port_csv: Path) -> plt.Figure | None:
@@ -447,14 +357,8 @@ def build_run_report_pdf(
     with PdfPages(pdf_path) as pdf:
         # Cover
         pdf.savefig(_fig_cover(outdir, summary_path)); plt.close()
-        # Executive summary
-        f = _exec_summary(outdir, summary_path)
-        if f: pdf.savefig(f); plt.close()
-        # Context & Method
-        f = _context_and_method(outdir, summary_path)
-        if f: pdf.savefig(f); plt.close()
-        # Recommendations
-        f = _recommendations_page(outdir, summary_path)
+        # One compact page: Summary + Context + Recommendations
+        f = _summary_page(outdir, summary_path)
         if f: pdf.savefig(f); plt.close()
         # Per-port table
         f = _fig_per_port_table(outdir / "per_port.csv")
