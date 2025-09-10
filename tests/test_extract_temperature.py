@@ -1,0 +1,21 @@
+from pathlib import Path
+
+from openpyxl import Workbook
+
+from kielproc.tools.legacy_overlay import extract_temperature_from_workbook
+
+
+def test_extract_temperature_from_workbook(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws["H15"] = "C"
+    ws["I15"] = 20.0
+    f = tmp_path / "wb.xlsx"
+    wb.save(f)
+
+    res = extract_temperature_from_workbook(Path(f))
+    assert res["status"] == "ok"
+    assert abs(res["T_K"] - (20.0 + 273.15)) < 1e-6
+    assert res["cell"] == "Data!I15"
+
