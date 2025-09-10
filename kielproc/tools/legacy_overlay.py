@@ -125,4 +125,53 @@ def extract_piccolo_overlay_from_workbook(xlsx_path: Path, out_csv: Path) -> Dic
     return {"status": "no_dp_found", "source": None, "rows": 0}
 
 
-__all__ = ["extract_piccolo_overlay_from_workbook"]
+# --- NEW: extract barometric pressure (Data!H15:I19) with units ---
+def extract_baro_from_workbook(xlsx_path: Path) -> Dict[str, Any]:
+    """
+    Read barometric pressure from the legacy workbook's Data sheet.
+    Expected region: H15:I19 where column H is a unit label and column I is the value.
+    Typical rows:
+        H15='kPa'   I15=101.6
+        H16='C'     I16=<dry-bulb>
+        H17='C'     I17=<wet-bulb or other>
+        H18='kg/m3' I18=<density>
+        H21='m'     I21=<elevation>
+    Returns:
+        {"status":"ok","baro_pa":float,"unit_raw":str,"cell":"Data!I15"} or {"status":"absent"}.
+    """
+    try:
+        wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
+        if "Data" not in wb.sheetnames:
+            return {"status": "absent"}
+        ws = wb["Data"]
+        # Scan H15:I19 (rows 15..19, cols H=8, I=9)
+        for r in range(15, 20):
+            unit = ws.cell(row=r, column=8).value  # H
+            val = ws.cell(row=r, column=9).value  # I
+            if val is None or unit is None:
+                continue
+            unit_s = str(unit).strip().lower()
+            # Map known units -> Pa
+            if isinstance(val, (int, float)):
+                if unit_s in ("kpa",):
+                    pa = float(val) * 1000.0
+                elif unit_s in ("pa",):
+                    pa = float(val)
+                elif unit_s in ("mbar", "mb"):
+                    pa = float(val) * 100.0
+                else:
+                    # skip rows that are clearly not pressure (e.g., 'c', 'kg/m3', 'm')
+                    continue
+                if pa > 0:
+                    return {
+                        "status": "ok",
+                        "baro_pa": pa,
+                        "unit_raw": unit_s,
+                        "cell": f"Data!I{r}",
+                    }
+        return {"status": "absent"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+__all__ = ["extract_piccolo_overlay_from_workbook", "extract_baro_from_workbook"]

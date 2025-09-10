@@ -78,6 +78,9 @@ def test_run_all_accepts_workbook(tmp_path):
 
     wb = load_workbook(wb_path)
     wb["P1"].insert_rows(2)
+    ws = wb["Data"]
+    ws["H15"] = "kPa"
+    ws["I15"] = 101.6
     wb.save(wb_path)
 
     cfg = RunConfig(
@@ -106,5 +109,8 @@ def test_run_all_accepts_workbook(tmp_path):
     csv = Path(picc["csv"])
     assert csv.exists()
     dfp = pd.read_csv(csv)
-    assert abs(dfp["DP_mbar"].iloc[0] - ( (8.0 - 4.0)/16.0 * 6.7 )) < 1e-6
-    assert abs(dfp["DP_mbar"].iloc[1] - ( (12.0 - 4.0)/16.0 * 6.7 )) < 1e-6
+    assert abs(dfp["DP_mbar"].iloc[0] - ((8.0 - 4.0) / 16.0 * 6.7)) < 1e-6
+    assert abs(dfp["DP_mbar"].iloc[1] - ((12.0 - 4.0) / 16.0 * 6.7)) < 1e-6
+    # Barometric pressure extracted from workbook Data sheet
+    assert summary["baro_pa"] == 101_600.0
+    assert summary["baro"]["status"] == "ok"
