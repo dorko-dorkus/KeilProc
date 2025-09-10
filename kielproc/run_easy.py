@@ -178,16 +178,20 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     (outdir / "per_port.csv").write_text(res["per_port"].to_csv(index=False))
     (outdir / "duct_result.json").write_text(json.dumps(res.get("duct", {}), indent=2))
     (outdir / "normalize_meta.json").write_text(json.dumps(res.get("normalize_meta", {}), indent=2))
-    piccolo_overlay = {}
+    piccolo_overlay_csv = None
+    overlay_expected = False
     if input_mode == "legacy_workbook":
+        # Try to auto-extract Piccolo DP for overlay from the same workbook
         try:
-            piccolo_overlay = extract_piccolo_overlay_from_workbook(in_path, outdir / "piccolo_overlay.csv")
-            if piccolo_overlay.get("status") == "ok":
-                piccolo_overlay["csv"] = str(outdir / "piccolo_overlay.csv")
+            # NOTE: extractor returns a dict; use its 'csv' field (don’t assume location)
+            _meta = extract_piccolo_overlay_from_workbook(in_path, prepared_dir / "piccolo_overlay.csv")
+            if _meta.get("status") == "ok":
+                piccolo_overlay_csv = Path(_meta.get("csv", prepared_dir / "piccolo_overlay.csv"))
+                overlay_expected = True
             else:
-                piccolo_overlay["csv"] = None
-        except Exception as e:
-            piccolo_overlay = {"status": "error", "error": str(e), "csv": None}
+                piccolo_overlay_csv = None
+        except Exception:
+            piccolo_overlay_csv = None
     
     # ---------------------- Venturi mapping (optional) -----------------------
     venturi = {}
@@ -245,6 +249,9 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         venturi = {"error": str(e)}
     # Optional transmitter setpoints
     sp_csv = cfg.setpoints_csv or (site.defaults.get("setpoints_csv") if site and site.defaults else None)
+    # Use the extracted overlay (workbook mode) by default
+    if piccolo_overlay_csv and piccolo_overlay_csv.exists():
+        sp_csv = str(piccolo_overlay_csv)
     if sp_csv:
         try:
             sp = compute_and_write_setpoints(
@@ -263,17 +270,17 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         sp = {}
 
     # ---------------------- Flow lookup (always) -----------------------------
-    try:
-        flow_lookup = write_lookup_outputs(
-            outdir,
-            season=cfg.season,
-            site_defaults=(site.defaults or {}),
-            logger_csv=(Path(sp_csv) if sp_csv else None),
-            # dp_col/unit autodetect; constant reference up to lookup_dp_max_mbar
-            dp_max_mbar=float(cfg.lookup_dp_max_mbar or 10.0),
-        )
-    except Exception as e:
-        flow_lookup = {"error": str(e)}
+    # Fail loud if we expected an overlay but ended up with none
+    if overlay_expected and not (sp_csv and Path(sp_csv).exists()):
+        raise RuntimeError("Overlay expected from workbook, but piccolo_overlay.csv not found.")
+
+    flow_lookup = write_lookup_outputs(
+        outdir,
+        season=cfg.season,
+        site_defaults=(site.defaults or {}),
+        logger_csv=(Path(sp_csv) if sp_csv else None),
+        dp_max_mbar=float(cfg.lookup_dp_max_mbar or 10.0),
+    )
 
     summary = {
         "baro_pa": baro_pa,
@@ -285,7 +292,11 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "per_port_csv": str(outdir / "per_port.csv"),
         "duct_result_json": str(outdir / "duct_result.json"),
         "normalize_meta_json": str(outdir / "normalize_meta.json"),
-        "piccolo_overlay": piccolo_overlay,
+        # Record exactly what we used
+        "piccolo_overlay": {
+            "status": "ok" if (piccolo_overlay_csv and Path(piccolo_overlay_csv).exists()) else "absent",
+            "csv": (str(piccolo_overlay_csv) if piccolo_overlay_csv else None),
+        },
         "setpoints": sp,
         "flow_lookup": flow_lookup,
         "venturi_result_json": (str(outdir / "venturi_result.json") if venturi else None),
