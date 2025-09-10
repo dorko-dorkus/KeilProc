@@ -16,25 +16,62 @@ def _load_json(p: Path) -> dict:
 
 
 def _fig_text(title: str, lines: list[str]) -> plt.Figure:
-    """Text page with safe ASCII, consistent wrap and readable padding."""
-    fig = plt.figure(figsize=(8.27, 11.69))  # A4 portrait
-    ax = fig.add_axes([0,0,1,1]); ax.axis("off")
-    y = 0.94
-    left_margin = 0.07
-    wrap_width = 80  # tighter to avoid edge spill
-    ax.text(left_margin, y, title, va="top", ha="left", fontsize=14, weight="bold")
-    y -= 0.044
+    """
+    Single-page text with auto-fit:
+      - tries (font, wrap) = (10pt,80) -> (9pt,88) -> (8pt,96)
+      - ASCII-normalizes risky glyphs to avoid missing characters
+    """
+    # Pre-normalize once
+    norm = []
     for raw in lines:
-        # normalize risky glyphs to ASCII so PDF text never drops them
         safe = (raw.replace("√", "sqrt")
                     .replace("·", "*")
                     .replace("Δ", "d")
-                    .replace("ρ", "rho"))
-        wrapped = textwrap.fill(safe, width=wrap_width)
-        ax.text(left_margin, y, wrapped, va="top", ha="left",
-                fontsize=10, family="monospace")
-        y -= 0.034 + 0.014 * max(1, wrapped.count("\n")+1)
-        if y < 0.08:
+                    .replace("ρ", "rho")
+                    .replace("²", "^2")
+                    .replace("³", "^3")
+                    .replace("μ", "u"))
+        norm.append(safe)
+
+    fig = plt.figure(figsize=(8.27, 11.69))  # A4 portrait
+    ax = fig.add_axes([0,0,1,1]); ax.axis("off")
+    left_margin = 0.07
+    top_y, bot_y = 0.94, 0.08
+    ax.text(left_margin, top_y, title, va="top", ha="left", fontsize=14, weight="bold")
+
+    # Try a few (font, wrap, spacing) combos until it fits
+    trials = [
+        {"fs": 10, "wrap": 80, "step": 0.033, "extra": 0.012},
+        {"fs":  9, "wrap": 88, "step": 0.030, "extra": 0.011},
+        {"fs":  8, "wrap": 96, "step": 0.028, "extra": 0.010},
+    ]
+    chosen = None
+    wrapped_variants = []
+    for t in trials:
+        ww = t["wrap"]
+        wrapped = [textwrap.fill(s, width=ww) for s in norm]
+        # estimate vertical space needed
+        nlines = sum(max(1, w.count("\n")+1) for w in wrapped)
+        # header consumes ~0.044; remaining height:
+        avail = (top_y - 0.044) - bot_y
+        need  = nlines * (t["step"] + t["extra"])  # conservative estimate
+        wrapped_variants.append(wrapped)
+        if need <= avail:
+            chosen = t
+            break
+    if chosen is None:
+        # fall back to last trial; it may still overrun slightly, but far less
+        chosen = trials[-1]
+    wrapped = wrapped_variants[trials.index(chosen)]
+
+    y = top_y - 0.044
+    for w in wrapped:
+        ax.text(left_margin, y, w, va="top", ha="left",
+                fontsize=chosen["fs"], family="monospace")
+        # reduce step a touch if paragraph is a single short line
+        lines_here = max(1, w.count("\n")+1)
+        y -= chosen["step"] + chosen["extra"] * lines_here
+        if y < bot_y:
             break
     return fig
 
@@ -275,28 +312,33 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     else:
         L.append("Overlay: not present (reference curves only).")
     if dp_cross is not None:
-        L.append(f"Crossover (current 820 = UIC): DP ≈ {dp_cross:.3f} mbar")
+        L.append(f"Crossover (current 820 = UIC): DP ~= {dp_cross:.3f} mbar")
     L.append("")  # spacer
     L.append("Context & Method:")
-    L.append("  • UIC (physics):  Flow_UIC = K*sqrt(DP)")
-    L.append("  • 820 (linear):   Flow_820 = m*DP + c")
-    L.append("  • Overlay DP from Piccolo 4–20 mA; baro from workbook when available.")
-    L.append("")  # spacer
-    L.append("Recommendations (local linearization over operating band):")
-    L.append(f"  • Band: {lo:.3f}–{hi:.3f} mbar   (mid {mid:.3f})")
-    L.append(f"  • Current 820: m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}")
-    L.append(
-        f"  • Proposed 820 (minimax L_inf): m*={m_rec:.4f}  c*={c_rec:.4f}  "
-        f"(dm={(m_rec-(m or 0.0)):+.4f}  dc={(c_rec-(c or 0.0)):+.4f})"
-    )
-    L.append(f"    Errors — Current: mean={cur_mean:.3f}, worst={cur_worst:.3f} @ {cur_wdp:.3f} mbar")
-    L.append(f"              L_inf:  mean={inf_mean:.3f}, worst={inf_worst:.3f} @ {inf_wdp:.3f} mbar")
-    L.append(f"    Alternatives — Tangent@mid: m={m_tan:.4f}  c={c_tan:.4f}  (worst={tan_worst:.3f})")
-    L.append(f"                   Secant:      m={m_sec:.4f}  c={c_sec:.4f}  (worst={sec_worst:.3f})")
-    L.append(f"                   L2:          m={m_l2:.4f}  c={c_l2:.4f}    (worst={l2_worst:.3f})")
+    L.append("  • UIC: Flow_UIC = K*sqrt(DP)  (K in t/h per sqrt(mbar), DP in mbar)")
+    L.append("  • 820: Flow_820 = m*DP + c   (m in t/h/mbar, c in t/h)")
+    L.append("  • Overlay DP from Piccolo 4-20 mA; baro/PA T from workbook when available.")
+
+    blocks = [L]
+
+    rec = [
+        "Recommendations (local linearization over operating band):",
+        f"  Band: {lo:.3f}–{hi:.3f} mbar   (mid {mid:.3f})",
+        f"  Current 820: m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}",
+        f"  Proposed 820 (minimax L_inf): m*={m_rec:.4f}  c*={c_rec:.4f}  (dm={(m_rec-(m or 0.0)):+.4f}  dc={(c_rec-(c or 0.0)):+.4f})",
+        f"    Errors — Current: mean={cur_mean:.3f}, worst={cur_worst:.3f}@{cur_wdp:.3f} mbar",
+        f"              L_inf:  mean={inf_mean:.3f}, worst={inf_worst:.3f}@{inf_wdp:.3f} mbar",
+        f"    Alternatives — Tangent@mid: m={m_tan:.4f}  c={c_tan:.4f}  (worst={tan_worst:.3f})",
+        f"                   Secant:      m={m_sec:.4f}  c={c_sec:.4f}  (worst={sec_worst:.3f})",
+        f"                   L2:          m={m_l2:.4f}  c={c_l2:.4f}    (worst={l2_worst:.3f})",
+    ]
     if cross_rec is not None:
-        L.append(f"  • Proposed crossover (820 = UIC): DP ≈ {cross_rec:.3f} mbar")
-    return _fig_text("Summary", L)
+        rec.append(f"  Proposed crossover (820=UIC): DP ~= {cross_rec:.3f} mbar")
+    blocks.append(rec)
+
+    # flattened lines go into one auto-fit page
+    flat = blocks and sum(([b] if isinstance(b, str) else [*b] for b in blocks), [])
+    return _fig_text("Summary", flat)
 
 
 def _fig_per_port_table(per_port_csv: Path) -> plt.Figure | None:
