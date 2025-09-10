@@ -2,6 +2,8 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime
 import json
+import math
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -81,6 +83,41 @@ def _fig_flow_reference_with_overlay(outdir: Path) -> plt.Figure | None:
     return fig
 
 
+def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
+    """Same as the full plot, but X-zoomed to the overlay DP band (+ padding).
+    Skips if no overlay data is present."""
+    ref = Path(outdir) / "transmitter_lookup_reference.csv"
+    data = Path(outdir) / "transmitter_lookup_data.csv"
+    if not (ref.exists() and data.exists()):
+        return None
+    dref = pd.read_csv(ref)
+    dd = pd.read_csv(data)
+    need = {"data_DP_mbar", "data_Flow_UIC_tph", "data_Flow_820_tph"}
+    if not need.issubset(dd.columns):
+        return None
+    dp = pd.to_numeric(dd["data_DP_mbar"], errors="coerce").dropna()
+    if dp.empty:
+        return None
+    dp_min = float(dp.min()); dp_max = float(dp.max()); span = dp_max - dp_min
+    pad = max(0.10 * span, 0.05)  # at least ±0.05 mbar
+    lo = max(0.0, dp_min - pad)
+    ref_max = float(dref["ref_DP_mbar"].max())
+    hi = min(ref_max, dp_max + pad)
+    if hi <= lo:
+        return None
+    zr = dref[(dref["ref_DP_mbar"] >= lo) & (dref["ref_DP_mbar"] <= hi)]
+    fig = plt.figure(figsize=(11.69, 8.27)); ax = fig.add_subplot(111)
+    ax.plot(zr["ref_DP_mbar"], zr["ref_Flow_UIC_tph"], label="UIC (√DP) – reference", zorder=1)
+    ax.plot(zr["ref_DP_mbar"], zr["ref_Flow_820_tph"], label="820 (linear) – reference", zorder=1)
+    ax.scatter(dd["data_DP_mbar"], dd["data_Flow_UIC_tph"], s=20, alpha=0.85, label="UIC – data", zorder=5)
+    ax.scatter(dd["data_DP_mbar"], dd["data_Flow_820_tph"], s=20, alpha=0.85, label="820 – data", zorder=5)
+    ax.set_xlim(lo, hi)
+    ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
+    ax.set_title(f"Flow lookup — overlay zoom (n={len(dp)}, DP {dp_min:.3f}–{dp_max:.3f} mbar)")
+    ax.grid(True, linestyle="--", alpha=0.4); ax.legend()
+    return fig
+
+
 def _fig_venturi_curve(outdir: Path) -> plt.Figure | None:
     curve_csv = Path(outdir) / "venturi_curve.csv"
     vjson = Path(outdir) / "venturi_result.json"
@@ -133,6 +170,9 @@ def build_run_report_pdf(
         if f: pdf.savefig(f); plt.close()
         # Flow reference (constant) + data overlay (optional)
         f = _fig_flow_reference_with_overlay(outdir)
+        if f: pdf.savefig(f); plt.close()
+        # Flow reference + overlay (zoomed to overlay region)
+        f = _fig_flow_reference_zoom(outdir)
         if f: pdf.savefig(f); plt.close()
         # Venturi curve (optional)
         f = _fig_venturi_curve(outdir)
