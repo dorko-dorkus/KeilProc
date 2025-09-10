@@ -98,7 +98,11 @@ def _fig_cover(outdir: Path, summary_path: Path) -> plt.Figure:
     if s:
         lines.append(f"Site: {s.get('site_name','')}")
         bp = s.get("baro_pa", None)
-        if isinstance(bp, (int, float)): lines.append(f"Barometric pressure: {bp:.0f} Pa")
+        if isinstance(bp, (int, float)):
+            bs = s.get("baro_source", {})
+            src = bs.get("source", "")
+            extra = f" ({bs.get('cell','')}, {bs.get('unit_raw','')})" if src == "workbook" else ""
+            lines.append(f"Barometric pressure: {bp:.0f} Pa  [{src}{extra}]")
         lines.append(f"Input mode: {s.get('input_mode','')}")
         lines.append(f"Prepared input: {s.get('prepared_input_dir','')}")
         if s.get("beta") is not None or s.get("r") is not None:
