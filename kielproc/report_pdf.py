@@ -16,16 +16,24 @@ def _load_json(p: Path) -> dict:
 
 
 def _fig_text(title: str, lines: list[str]) -> plt.Figure:
-    """Simple text page with conservative wrapping to avoid spillover."""
+    """Text page with safe ASCII, consistent wrap and readable padding."""
     fig = plt.figure(figsize=(8.27, 11.69))  # A4 portrait
     ax = fig.add_axes([0,0,1,1]); ax.axis("off")
     y = 0.94
-    ax.text(0.08, y, title, va="top", ha="left", fontsize=14, weight="bold")
-    y -= 0.036
+    left_margin = 0.07
+    wrap_width = 80  # tighter to avoid edge spill
+    ax.text(left_margin, y, title, va="top", ha="left", fontsize=14, weight="bold")
+    y -= 0.044
     for raw in lines:
-        wrapped = textwrap.fill(raw, width=95)
-        ax.text(0.08, y, wrapped, va="top", ha="left", fontsize=10, family="monospace")
-        y -= 0.032 + 0.014 * max(1, wrapped.count("\n") + 1)
+        # normalize risky glyphs to ASCII so PDF text never drops them
+        safe = (raw.replace("√", "sqrt")
+                    .replace("·", "*")
+                    .replace("Δ", "d")
+                    .replace("ρ", "rho"))
+        wrapped = textwrap.fill(safe, width=wrap_width)
+        ax.text(left_margin, y, wrapped, va="top", ha="left",
+                fontsize=10, family="monospace")
+        y -= 0.034 + 0.014 * max(1, wrapped.count("\n")+1)
         if y < 0.08:
             break
     return fig
@@ -63,7 +71,7 @@ def _fig_cover(outdir: Path, summary_path: Path) -> plt.Figure:
         lines.append("")
         lines.append(f"Season: {flow_meta.get('season','')}")
         if cal:
-            lines.append(f"UIC K (t/h per √mbar): {cal.get('K_uic','')}")
+            lines.append(f"UIC K (t/h per sqrt(mbar)): {cal.get('K_uic','')}")
             lines.append(f"820 m (t/h/mbar): {cal.get('m_820','')}   c (t/h): {cal.get('c_820','')}")
             lines.append(f"Calibration source: {cal.get('source','')}")
     ax.text(0.08, 0.92, "\n".join(lines), va="top", ha="left", fontsize=12, family="monospace")
@@ -88,7 +96,7 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
 
     # ---------- Overlay stats ----------
     overlay_csv = meta.get("overlay_csv")
-    n = 0; dp_min = dp_max = None; mean_abs_err = worst_abs_err = None
+    n = 0; dp_min = dp_max = None; mean_abs = worst_abs = None
     df = None
     if overlay_csv and Path(overlay_csv).exists():
         try:
@@ -105,8 +113,8 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
                 dp_min = float(df["data_DP_mbar"].min())
                 dp_max = float(df["data_DP_mbar"].max())
                 err = (df["data_Flow_820_tph"] - df["data_Flow_UIC_tph"]).to_numpy()
-                mean_abs_err = float(np.nanmean(np.abs(err)))
-                worst_abs_err = float(np.nanmax(np.abs(err)))
+                mean_abs = float(np.nanmean(np.abs(err)))
+                worst_abs = float(np.nanmax(np.abs(err)))
 
     # crossover DP (informative)
     dp_cross = None
@@ -161,65 +169,70 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
                 if r and r > 0: return float(r)
         except Exception: return None
         return None
-    dp_cross_rec = _cross(K or 0.0, m_rec, c_rec)
+    cross_rec = _cross(K or 0.0, m_rec, c_rec)
 
     # ---------- Build one compact page ----------
+    # (header "Summary" provided separately by _fig_text)
     L: list[str] = []
-    L.append("Summary")
-    L.append("───────")
-    # Include K units explicitly: t/h per √mbar
-    Ktxt = f"{K:.4f} t/h per √mbar" if isinstance(K, (int, float)) else "n/a"
-    L.append(
-        "Season: {}   Calibration: K(UIC)={}   m(820)={}   c(820)={}".format(
-            season or "n/a",
-            Ktxt,
-            m if m is not None else "n/a",
-            c if c is not None else "n/a",
-        )
-    )
+    Ktxt = f"{K:.4f} t/h per sqrt(mbar)" if isinstance(K,(int,float)) else "n/a"
+    L.append("Season: {}   Calibration: K(UIC)={}   m(820)={}   c(820)={}"\
+             .format(season or "n/a", Ktxt,
+                     m if m is not None else "n/a",
+                     c if c is not None else "n/a"))
+    L.append(f"Site: {s.get('site_name','')}")
     L.append(f"Barometric pressure: {baro_line}")
     # Temperature & density (if present)
     T_K_val = s.get("T_K")
     rho_val = s.get("rho_kg_m3")
     rho_src = s.get("rho_source")
     if isinstance(T_K_val, (int, float)):
-        L.append(f"Process temperature: {T_K_val:.2f} K ({T_K_val-273.15:.1f} °C)")
+        L.append(f"Process temperature: {T_K_val:.2f} K ({T_K_val-273.15:.1f} C)")
     if isinstance(rho_val, (int, float)):
-        line = f"ρ used: {rho_val:.4f} kg/m³"
+        line = f"rho used: {rho_val:.4f} kg/m3"
         if rho_src:
             line += f"  [{rho_src}]"
         if rho_val < 0.2 or rho_val > 2.0:
-            line += "  (WARNING: implausible — check baro/T units)"
+            line += "  (WARNING: implausible -- check baro/T units)"
         L.append(line)
     if n > 0:
-        L.append(f"Overlay (Piccolo-derived DP): n={n}   DP band: {dp_min:.3f}–{dp_max:.3f} mbar   820−UIC mean|Δ|={mean_abs_err:.3f} t/h   worst|Δ|={worst_abs_err:.3f} t/h")
+        L.append("")  # spacer
+        L.append("Overlay (Piccolo-derived DP):")
+        L.append(f"  • Samples: n={n}")
+        L.append(f"  • DP band: {dp_min:.3f}–{dp_max:.3f} mbar")
+        L.append(f"  • 820 vs UIC: mean abs error = {mean_abs:.3f} t/h; worst abs = {worst_abs:.3f} t/h")
         L.append("Piccolo mapping:")
-        pic = (s.get("piccolo_info") or {})
-        rng = pic.get("range_mbar", None)
-        avgI = pic.get("avg_current_mA", None)
+        pic = (s.get('piccolo_info') or {})
+        rng = pic.get('range_mbar', None)
+        avgI = pic.get('avg_current_mA', None)
+        impliedI = None
+        if rng and dp_min is not None and dp_max is not None and rng > 0:
+            I_lo = 4.0 + 16.0 * (dp_min / float(rng))
+            I_hi = 4.0 + 16.0 * (dp_max / float(rng))
+            impliedI = (I_lo, I_hi)
         if rng is not None:
             L.append(f"  • Range: {rng:.3f} mbar")
         if avgI is not None:
             L.append(f"  • Average current (workbook): {avgI:.4f} mA")
-        if rng and dp_min is not None and dp_max is not None and rng > 0:
-            I_lo = 4.0 + 16.0 * (dp_min / float(rng))
-            I_hi = 4.0 + 16.0 * (dp_max / float(rng))
-            L.append(f"  • Implied current from overlay DP: {I_lo:.4f}–{I_hi:.4f} mA")
+        if impliedI:
+            L.append(f"  • Implied current from overlay DP: {impliedI[0]:.4f}–{impliedI[1]:.4f} mA")
     else:
         L.append("Overlay: not present (reference curves only).")
     if dp_cross is not None:
         L.append(f"Crossover (current 820 = UIC): DP ≈ {dp_cross:.3f} mbar")
+    L.append("")  # spacer
     L.append("Context & Method:")
-    L.append("  • UIC (physics): Flow_UIC = K·√DP")
-    L.append("  • 820 (linear):  Flow_820 = m·DP + c")
-    L.append("  • Overlay DP from Piccolo 4–20 mA using workbook Range (mbar); baro from Data!H15:I19 when available.")
+    L.append("  • UIC (physics):  Flow_UIC = K*sqrt(DP)")
+    L.append("  • 820 (linear):   Flow_820 = m*DP + c")
+    L.append("  • Overlay DP from Piccolo 4–20 mA; baro from workbook when available.")
+    L.append("")  # spacer
     L.append("Recommendations (L2 over operating band):")
     L.append(f"  • Band used: {lo:.3f}–{hi:.3f} mbar")
-    L.append(f"  • Current 820: m={m if m is not None else 'n/a'}   c={c if c is not None else 'n/a'}")
-    L.append(f"  • Proposed 820: m*={m_rec:.4f}   c*={c_rec:.4f}   (Δm={(m_rec-(m or 0.0)):+.4f}  Δc={(c_rec-(c or 0.0)):+.4f})")
-    L.append(f"  • Error over band — Current: mean|Δ|={cur_mean:.3f}, worst|Δ|={cur_worst:.3f}@{cur_wdp:.3f} mbar; Proposed: mean|Δ|={rec_mean:.3f}, worst|Δ|={rec_worst:.3f}@{rec_wdp:.3f} mbar")
-    if dp_cross_rec is not None:
-        L.append(f"  • Proposed crossover (820 = UIC): DP ≈ {dp_cross_rec:.3f} mbar")
+    L.append(f"  • Current 820: m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}")
+    L.append(f"  • Proposed 820: m*={m_rec:.4f}  c*={c_rec:.4f}  (dm={(m_rec-(m or 0.0)):+.4f}  dc={(c_rec-(c or 0.0)):+.4f})")
+    L.append(f"  • Error over band — Current: mean abs={cur_mean:.3f}, worst abs={cur_worst:.3f} @ {cur_wdp:.3f} mbar")
+    L.append(f"                           Proposed: mean abs={rec_mean:.3f}, worst abs={rec_worst:.3f} @ {rec_wdp:.3f} mbar")
+    if cross_rec is not None:
+        L.append(f"  • Proposed crossover (820 = UIC): DP ≈ {cross_rec:.3f} mbar")
     return _fig_text("Summary", L)
 
 
