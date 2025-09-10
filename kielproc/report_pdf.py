@@ -788,33 +788,26 @@ def build_run_report_pdf(
         # Single merged page (Summary + Context & Method + Recommendations)
         f = _summary_merged(outdir, summary_path)
         if f: pdf.savefig(f); plt.close()
-        # Inputs snapshot
-        f = _page_inputs_snapshot(outdir, summary_path)
-        if f: pdf.savefig(f); plt.close()
-        # Data quality & exclusions
-        f = _page_data_quality(outdir)
-        if f: pdf.savefig(f); plt.close()
-        # Operating band table & verdict
-        f = _page_band_table_and_verdict(outdir, summary_path)
-        if f: pdf.savefig(f); plt.close()
-        # Error bars (before/after)
-        f = _fig_error_bars(outdir, summary_path)
-        if f: pdf.savefig(f); plt.close()
-        # Overlay coverage histogram
+        summary_path = Path(summary_path)
+        # 1) Inputs snapshot
+        pdf.savefig(_page_inputs_snapshot(outdir, summary_path)); plt.close()
+        # 2) Data quality & exclusions
+        pdf.savefig(_page_data_quality(outdir)); plt.close()
+        # 3) Operating band table & verdict
+        pdf.savefig(_page_band_table_and_verdict(outdir, summary_path)); plt.close()
+        # 4) Before/after error bars
+        pdf.savefig(_fig_error_bars(outdir, summary_path)); plt.close()
+        # 5) Overlay coverage histogram
         f = _fig_overlay_hist(outdir)
-        if f: pdf.savefig(f); plt.close()
-        # Density & geometry provenance
-        f = _page_density_geometry(outdir, summary_path)
-        if f: pdf.savefig(f); plt.close()
-        # Port map & weights
-        f = _page_port_weights(outdir)
-        if f: pdf.savefig(f); plt.close()
-        # Transmitter details
-        f = _page_tx_details(outdir, summary_path)
-        if f: pdf.savefig(f); plt.close()
-        # Repro & version
-        f = _page_repro_version(outdir, summary_path)
-        if f: pdf.savefig(f); plt.close()
+        if f is not None: pdf.savefig(f); plt.close()
+        # 6) Density & geometry provenance
+        pdf.savefig(_page_density_geometry(outdir, summary_path)); plt.close()
+        # 7) Port map & weights
+        pdf.savefig(_page_port_weights(outdir)); plt.close()
+        # 8) Transmitter details
+        pdf.savefig(_page_tx_details(outdir, summary_path)); plt.close()
+        # 9) Repro & version
+        pdf.savefig(_page_repro_version(outdir, summary_path)); plt.close()
         # Per-port table
         f = _fig_per_port_table(outdir / "per_port.csv")
         if f: pdf.savefig(f); plt.close()
