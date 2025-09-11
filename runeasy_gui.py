@@ -165,10 +165,14 @@ class App(tk.Tk):
         row_bias = ttk.Frame(tx); row_bias.grid(column=1, row=trow, sticky="w")
         self.tx_bias = ttk.Entry(row_bias, width=10); self.tx_bias.insert(0, "5.4")
         self.tx_bias.pack(side="left")
-        self.tx_bias_unit = ttk.Combobox(row_bias, values=["tph","percent"], width=8, state="readonly")
+        self.tx_bias_unit = ttk.Combobox(row_bias, values=["tph","percent","mA"], width=8, state="readonly")
         self.tx_bias_unit.set("tph")
         self.tx_bias_unit.pack(side="left", padx=4)
         trow += 1
+        ttk.Label(tx, text="Bias applies at").grid(column=0, row=trow, sticky="w")
+        self.tx_bias_mode = ttk.Combobox(tx, values=["current_pre_scale","flow_output"], width=18, state="readonly")
+        self.tx_bias_mode.set("current_pre_scale")
+        self.tx_bias_mode.grid(column=1, row=trow, sticky="w", padx=6); trow += 1
 
         # Derived/override m,c
         ttk.Label(tx, text="Derived slope m (t/h per mbar)").grid(column=0, row=trow, sticky="w")
@@ -185,7 +189,11 @@ class App(tk.Tk):
                 b  = float(self.tx_bias.get().strip())
                 fs = float(self.tx_fs.get().strip())
                 R  = float(self.tx_span.get().strip())
-                m,c = derive_mc_from_gain_bias(g, b, R, full_scale_tph=fs, bias_unit=self.tx_bias_unit.get())
+                if R <= 0 or fs <= 0:
+                    raise ValueError("DP span and FS must be > 0")
+                m,c = derive_mc_from_gain_bias(g, b, R, full_scale_tph=fs,
+                                               bias_unit=self.tx_bias_unit.get(),
+                                               bias_mode=self.tx_bias_mode.get())
                 self.tx_m.delete(0, tk.END); self.tx_m.insert(0, f"{m:.6g}")
                 self.tx_c.delete(0, tk.END); self.tx_c.insert(0, f"{c:.6g}")
             except Exception as e:
@@ -314,7 +322,7 @@ class App(tk.Tk):
             cfg.lookup_dp_max_mbar = span
         except Exception:
             pass
-        # Compute m,c if user didn’t type them (derive on the fly)
+        # Compute m,c if user didn’t type them (derive on the fly); FAIL if cannot.
         try:
             m = float(self.tx_m.get().strip()) if self.tx_m.get().strip() else None
             c = float(self.tx_c.get().strip()) if self.tx_c.get().strip() else None
@@ -323,7 +331,11 @@ class App(tk.Tk):
                 b  = float(self.tx_bias.get().strip())
                 fs = float(self.tx_fs.get().strip())
                 R  = float(self.tx_span.get().strip())
-                m, c = derive_mc_from_gain_bias(g, b, R, full_scale_tph=fs, bias_unit=self.tx_bias_unit.get())
+                if R <= 0 or fs <= 0:
+                    raise ValueError("DP span and FS must be > 0")
+                m, c = derive_mc_from_gain_bias(g, b, R, full_scale_tph=fs,
+                                                bias_unit=self.tx_bias_unit.get(),
+                                                bias_mode=self.tx_bias_mode.get())
             season_key = f"calib_820_{cfg.season.lower()}"
             cfg.site.defaults[season_key] = {"m": float(m), "c": float(c)}
         except Exception as e:
