@@ -230,25 +230,28 @@ def _normalize_df(df_raw: pd.DataFrame, baro_cli_pa: float | None):
     static_abs: pd.Series
     p_src: str
     st_src: str | None = None
-    if "static_abs_pa" in cols:
-        st_src = cols["static_abs_pa"]
+    # Candidate absolute columns: any column containing 'static_abs' (case-insensitive)
+    abs_candidates = [orig for low, orig in cols.items() if "static_abs" in low]
+    if abs_candidates:
+        st_src = abs_candidates[0]
         raw_abs = _col(st_src)
-        if np.nanmedian(raw_abs.to_numpy(float)) >= 8.0e4:
+        med = float(np.nanmedian(raw_abs.to_numpy(float)))
+        if med >= 8.0e4:
             static_abs = raw_abs
-            p_src = "Static_abs_pa_column"
+            p_src = f"{st_src}(absolute)"
         else:
             if bar_col:
                 baro = _coerce("Static", df[bar_col], bar_unit or "Pa")
             elif baro_cli_pa is not None:
                 baro = pd.Series(baro_cli_pa, index=raw_abs.index, dtype=float)
             else:
-                raise ValueError("Static_abs_pa present but <80 kPa and no baro_pa to correct it")
+                raise ValueError(f"{st_src} median {med:.1f} Pa < 80kPa and no baro_pa to correct it")
             static_abs = raw_abs + baro
-            p_src = "Static_abs_pa_TOO_SMALL_treated_as_gauge_plus_baro"
+            p_src = f"{st_src}(TOO_SMALL)->gauge+baro"
     else:
         st_key = next((cols[k] for k in ("static_gauge_pa", "static_pa", "static") if k in cols), None)
         if st_key is None:
-            raise KeyError("No static pressure column found (expected Static_abs_pa or Static[_gauge]_pa)")
+            raise KeyError("No static pressure column found (need Static_abs* or Static[_gauge]_pa)")
         st_src = st_key
         static_g = _col(st_src).fillna(0.0)
         if bar_col:
@@ -258,10 +261,12 @@ def _normalize_df(df_raw: pd.DataFrame, baro_cli_pa: float | None):
         else:
             raise ValueError("Barometric pressure required to reconstruct absolute plane static")
         static_abs = static_g + baro
-        p_src = "Static_gauge_plus_baro"
+        p_src = f"{st_src}(gauge)+baro"
 
     st_unit = _infer_unit_from_name(st_src, "Pa") if st_src else None
     out["Static_abs_Pa"] = static_abs
+    tC = out["Temperature"].to_numpy(float)
+    T_K = tC + 273.15
     meta = {
         "method": "repo_unify_schema" if cand is not None else "aliases_units",
         "vp_unit": vp_unit,
@@ -270,6 +275,10 @@ def _normalize_df(df_raw: pd.DataFrame, baro_cli_pa: float | None):
         "baro_unit": bar_unit,
         "p_abs_source": p_src,
         "baro_pa_used": float(baro_cli_pa) if baro_cli_pa is not None else None,
+        "sanity": {
+            "p_s_pa_median": float(np.nanmedian(static_abs.to_numpy(float))),
+            "T_K_median": float(np.nanmedian(T_K)),
+        },
     }
     return out, meta
 
