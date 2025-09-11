@@ -114,8 +114,22 @@ def write_lookup_outputs(
     """Always write the constant reference table; add data overlay if logger present."""
     outdir = Path(outdir); outdir.mkdir(parents=True, exist_ok=True)
     cal = _calib_for_season(season, site_defaults=site_defaults)
+    # sanity
+    if (
+        cal.m_820 is None
+        or cal.c_820 is None
+        or not all(math.isfinite(v) for v in (cal.m_820, cal.c_820))
+    ):
+        raise ValueError(
+            f"Transmitter calibration missing or invalid for season '{season}' (m or c)."
+        )
+    span = float(dp_max_mbar or 0.0)
+    if not (span > 0.0):
+        raise ValueError("DP span (dp_max_mbar) must be > 0 to build the reference table.")
     # reference side (constant)
-    ref = build_reference_table(cal, dp_max_mbar=float(dp_max_mbar or 10.0), dp_step_mbar=dp_step_mbar)
+    ref = build_reference_table(cal, dp_max_mbar=span, dp_step_mbar=dp_step_mbar)
+    if np.allclose(ref.drop(columns=["ref_DP_mbar"]).values, 0.0):
+        raise ValueError("Reference lookup table is all zeros; check calibration inputs.")
     ref_csv = outdir / "transmitter_lookup_reference.csv"
     ref.to_csv(ref_csv, index=False)
     # data side (optional)
@@ -176,6 +190,12 @@ def compute_and_write_flow_lookup(
         cal.m_820 = float(m_820); cal.source = "manual"
     if c_820 is not None:
         cal.c_820 = float(c_820); cal.source = "manual"
+    if (
+        cal.m_820 is None
+        or cal.c_820 is None
+        or not all(math.isfinite(v) for v in (cal.m_820, cal.c_820))
+    ):
+        raise ValueError("Transmitter calibration requires finite m_820 and c_820 values.")
 
     dp_mbar = _to_mbar(df[dp_col], dp_unit)
     flow_uic = cal.K_uic * np.sqrt(np.clip(dp_mbar.values, 0.0, None))
@@ -185,6 +205,8 @@ def compute_and_write_flow_lookup(
         "Flow_UIC_tph": flow_uic,
         "Flow_820_tph": flow_820,
     })
+    if np.allclose(table.drop(columns=["DP_mbar"]).values, 0.0):
+        raise ValueError("Lookup table is all zeros; check calibration inputs.")
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(out_csv, index=False)
     meta = {
