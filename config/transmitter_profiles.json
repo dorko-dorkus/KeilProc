@@ -1,0 +1,8 @@
+{
+  "default_range_mbar": 8.5,
+  "sites": {
+    "default": {
+      "summer": { "gain": 0.85, "bias": 5.4, "bias_unit": "tph", "full_scale_tph": 100, "range_mbar": 8.5 }
+    }
+  }
+}
