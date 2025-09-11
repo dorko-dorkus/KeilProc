@@ -268,10 +268,14 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     # (header "Summary" provided separately by _fig_text)
     L: list[str] = []
     Ktxt = f"{K:.4f} t/h per sqrt(mbar)" if isinstance(K,(int,float)) else "n/a"
-    L.append("Season: {}   Calibration: K(UIC)={}   m(820)={}   c(820)={}"\
+    rng = s.get("dp_range_mbar"); prof = s.get("profile_meta") or {}
+    fs  = prof.get("full_scale_tph", "n/a"); bu = prof.get("bias_unit", "tph")
+    L.append("Season: {}   Calibration: K(UIC)={}   m(820)={}   c(820)={}   range={} mbar   FS={} t/h (bias unit={})"\
              .format(season or "n/a", Ktxt,
-                     m if m is not None else "n/a",
-                     c if c is not None else "n/a"))
+                     (f"{m:.6g}" if m is not None else "n/a"),
+                     (f"{c:.6g}" if c is not None else "n/a"),
+                     (f"{rng:.6g}" if rng is not None else "n/a"),
+                     fs, bu))
     L.append(f"Site: {s.get('site_name','')}")
     L.append(f"Barometric pressure: {baro_line}")
     # Temperature & density (if present)
