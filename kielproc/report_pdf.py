@@ -573,6 +573,11 @@ def _page_density_geometry(outdir: Path, summary_path: Path) -> plt.Figure:
         L.append(
             f"  • plane static source: {nm.get('p_abs_source','n/a')}  (baro_pa_used={nm.get('baro_pa_used','n/a')})"
         )
+        snty = nm.get("sanity", {})
+        if snty:
+            L.append(
+                f"  • sanity: median p_s={snty.get('p_s_pa_median','n/a')} Pa; median T={snty.get('T_K_median','n/a')} K"
+            )
     return _fig_text("Density & Geometry", L)
 
 
