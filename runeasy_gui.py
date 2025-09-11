@@ -6,6 +6,7 @@ from tkinter import ttk, filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
 
 from kielproc.run_easy import RunConfig, SitePreset, run_all
+from kielproc.transmitter_profiles import derive_mc_from_gain_bias
 
 APP_TITLE = "KielProc – One-Button Run"
 
@@ -143,6 +144,55 @@ class App(tk.Tk):
         self.season = ttk.Combobox(frm, values=["summer", "winter"], width=10)
         self.season.set("summer")
         self.season.grid(column=1, row=row, sticky="w", padx=6); row += 1
+
+        # -------- 820 Transmitter (linear) --------
+        tx = ttk.LabelFrame(frm, text="820 Transmitter (linear)")
+        tx.grid(column=0, row=row, columnspan=3, sticky="ew", pady=(4, 8))
+        trow = 0
+        ttk.Label(tx, text="Full-scale FS (t/h)").grid(column=0, row=trow, sticky="w")
+        self.tx_fs = ttk.Entry(tx, width=10); self.tx_fs.insert(0, "100")
+        self.tx_fs.grid(column=1, row=trow, sticky="w", padx=6); trow += 1
+
+        ttk.Label(tx, text="DP span R (mbar)").grid(column=0, row=trow, sticky="w")
+        self.tx_span = ttk.Entry(tx, width=10); self.tx_span.insert(0, "8.5")
+        self.tx_span.grid(column=1, row=trow, sticky="w", padx=6); trow += 1
+
+        ttk.Label(tx, text="Gain g (dimensionless)").grid(column=0, row=trow, sticky="w")
+        self.tx_gain = ttk.Entry(tx, width=10); self.tx_gain.insert(0, "0.85")
+        self.tx_gain.grid(column=1, row=trow, sticky="w", padx=6); trow += 1
+
+        ttk.Label(tx, text="Bias").grid(column=0, row=trow, sticky="w")
+        row_bias = ttk.Frame(tx); row_bias.grid(column=1, row=trow, sticky="w")
+        self.tx_bias = ttk.Entry(row_bias, width=10); self.tx_bias.insert(0, "5.4")
+        self.tx_bias.pack(side="left")
+        self.tx_bias_unit = ttk.Combobox(row_bias, values=["tph","percent"], width=8, state="readonly")
+        self.tx_bias_unit.set("tph")
+        self.tx_bias_unit.pack(side="left", padx=4)
+        trow += 1
+
+        # Derived/override m,c
+        ttk.Label(tx, text="Derived slope m (t/h per mbar)").grid(column=0, row=trow, sticky="w")
+        self.tx_m = ttk.Entry(tx, width=12)
+        self.tx_m.grid(column=1, row=trow, sticky="w", padx=6); trow += 1
+        ttk.Label(tx, text="Derived intercept c (t/h)").grid(column=0, row=trow, sticky="w")
+        self.tx_c = ttk.Entry(tx, width=12)
+        self.tx_c.grid(column=1, row=trow, sticky="w", padx=6); trow += 1
+
+        # Derive button
+        def _derive():
+            try:
+                g  = float(self.tx_gain.get().strip())
+                b  = float(self.tx_bias.get().strip())
+                fs = float(self.tx_fs.get().strip())
+                R  = float(self.tx_span.get().strip())
+                m,c = derive_mc_from_gain_bias(g, b, R, full_scale_tph=fs, bias_unit=self.tx_bias_unit.get())
+                self.tx_m.delete(0, tk.END); self.tx_m.insert(0, f"{m:.6g}")
+                self.tx_c.delete(0, tk.END); self.tx_c.insert(0, f"{c:.6g}")
+            except Exception as e:
+                messagebox.showerror(APP_TITLE, f"Derive m,c failed: {e}")
+        ttk.Button(tx, text="Derive m,c", command=_derive).grid(column=0, row=trow, columnspan=2, sticky="w", pady=4)
+        row += 1
+
         ttk.Label(frm, text="Min fraction of span at p95 (0.60)").grid(column=0, row=row, sticky="w")
         self.sp_min = ttk.Entry(frm, width=10); self.sp_min.insert(0, "0.6")
         self.sp_min.grid(column=1, row=row, sticky="w", padx=6); row += 1
@@ -252,8 +302,34 @@ class App(tk.Tk):
                 except Exception:
                     pass
 
-        # Season + optional CSV overlay always available
+        # Season + 820 transmitter parameters
         cfg.season = (self.season.get().strip() or "summer")
+        # Allow the 820 override even if site preset is disabled: create a temp defaults dict
+        if not cfg.enable_site:
+            cfg.site = SitePreset(name="__GUI__", defaults={})
+            cfg.enable_site = True
+        # Use entered span as lookup grid max too
+        try:
+            span = float(self.tx_span.get().strip())
+            cfg.lookup_dp_max_mbar = span
+        except Exception:
+            pass
+        # Compute m,c if user didn’t type them (derive on the fly)
+        try:
+            m = float(self.tx_m.get().strip()) if self.tx_m.get().strip() else None
+            c = float(self.tx_c.get().strip()) if self.tx_c.get().strip() else None
+            if m is None or c is None:
+                g  = float(self.tx_gain.get().strip())
+                b  = float(self.tx_bias.get().strip())
+                fs = float(self.tx_fs.get().strip())
+                R  = float(self.tx_span.get().strip())
+                m, c = derive_mc_from_gain_bias(g, b, R, full_scale_tph=fs, bias_unit=self.tx_bias_unit.get())
+            season_key = f"calib_820_{cfg.season.lower()}"
+            cfg.site.defaults[season_key] = {"m": float(m), "c": float(c)}
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Invalid 820 inputs: {e}")
+            return
+
         if self.sp_csv.get().strip():
             cfg.setpoints_csv = self.sp_csv.get().strip()
             try:
