@@ -277,6 +277,12 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 # Ideal-gas density at traverse plane (prefer plane static)
                 P_use = float(p_s_mean) if p_s_mean else float(baro_pa)
                 rho_used = P_use / (287.05 * float(T_K))
+                # sanity: density must be in [0.2, 2.0] kg/m^3 for hot PA; if not, abort loudly
+                if not (0.2 <= rho_used <= 2.0):
+                    raise ValueError(
+                        f"implausible density {rho_used:.6f} kg/m^3 (P_use={P_use:.1f} Pa, T_K={T_K:.2f}). "
+                        f"Check plane static: if p_s looked like gauge, it must be baro+static_gauge."
+                    )
                 venturi_path = build_venturi_result(
                     outdir,
                     beta=beta,
@@ -291,6 +297,9 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 r_ar = (1.0 / (beta * beta)) if beta else None
                 recompute_duct_result_with_rho(outdir, rho_used, r_area_ratio=r_ar)
         except Exception as _e:  # pragma: no cover - defensive
+            # Allow density sanity check to abort the run
+            if isinstance(_e, ValueError):
+                raise
             logger.warning("Venturi curve build skipped: %s", _e)
     # Optional transmitter setpoints
     sp_csv = cfg.setpoints_csv or (site.defaults.get("setpoints_csv") if site and site.defaults else None)

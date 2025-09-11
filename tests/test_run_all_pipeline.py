@@ -16,7 +16,7 @@ def test_run_all_produces_outputs(tmp_path):
         {
             "VP": [10.0, 12.0],
             "Temperature": [25.0, 26.0],
-            "Static": [101325.0, 101300.0],
+            "Static": [0.0, -25.0],
         }
     ).to_csv(in_dir / "run__P1.csv", index=False)
 
@@ -71,7 +71,7 @@ def test_run_all_accepts_workbook(tmp_path):
 
     # Build workbook with blank unit row
     cols = ["Time", "Static Pressure", "Velocity Pressure", "Temperature", "Piccolo", "Piccolo Tx Current"]
-    data = [[0, 101325, 10, 25, 0.1, 8.0], [1, 101300, 12, 26, 0.2, 12.0]]
+    data = [[0, 0, 10, 25, 0.1, 8.0], [1, -25, 12, 26, 0.2, 12.0]]
     with pd.ExcelWriter(wb_path, engine="openpyxl") as writer:
         pd.DataFrame(data, columns=cols).to_excel(writer, sheet_name="P1", index=False)
         pd.DataFrame([["Piccolo Tx Range Setting", 6.7]]).to_excel(writer, sheet_name="Data", index=False, header=False)
