@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Tuple, List
+from typing import Any, Dict, List
 
 # Default pressure range in mbar if not provided in profile
 default_range = 100.0
@@ -50,14 +50,21 @@ def load_tx_profile(site_name: str,
     gain = entry.get("gain")
     bias = entry.get("bias")
     fs = entry.get("full_scale_tph", 100.0)
-    bias_unit = (entry.get("bias_unit") or "tph").lower()  # "tph" or "percent"
+    bias_unit = (entry.get("bias_unit") or "tph").lower()
+    bias_mode = entry.get("bias_mode") or "current_pre_scale"
     m = entry.get("m")
     c = entry.get("c")
     if (m is None or c is None):
         if (gain is None) or (bias is None) or (rng is None):
             return None
-        m = float(gain) * float(fs) / float(rng)
-        c = float(bias) if bias_unit == "tph" else float(bias) * float(fs) / 100.0
+        m, c = derive_mc_from_gain_bias(
+            gain,
+            bias,
+            rng,
+            full_scale_tph=fs,
+            bias_unit=bias_unit,
+            bias_mode=bias_mode,
+        )
     if rng is None:
         return None
     return float(m), float(c), float(rng), {
@@ -68,12 +75,18 @@ def load_tx_profile(site_name: str,
         "bias": bias,
         "full_scale_tph": fs,
         "bias_unit": bias_unit,
+        "bias_mode": bias_mode,
     }
 
 
-def derive_mc_from_gain_bias(gain: float, bias: float, range_mbar: float,
-                             full_scale_tph: float = 100.0,
-                             bias_unit: str = "tph") -> Tuple[float, float]:
+def derive_mc_from_gain_bias(
+    gain: float,
+    bias: float,
+    range_mbar: float,
+    full_scale_tph: float = 100.0,
+    bias_unit: str = "tph",
+    bias_mode: str = "current_pre_scale",
+) -> tuple[float, float]:
     """Return (m, c) from (gain, bias, range, FS).
 
     Parameters
@@ -84,10 +97,38 @@ def derive_mc_from_gain_bias(gain: float, bias: float, range_mbar: float,
         Pressure range in mbar.
     full_scale_tph : float, default 100.0
         Full-scale flow in tph.
-    bias_unit : {"tph", "percent"}, default "tph"
-        Unit of the bias value.  ``"percent"`` indicates percentage of
-        full scale.
+    bias_unit : {"tph", "percent", "mA"}, default "tph"
+        Unit of the bias value. ``"percent"`` indicates percentage of full scale
+        and ``"mA"`` uses 4–20 mA scaling.
+    bias_mode : {"current_pre_scale", "flow_output"}, default "current_pre_scale"
+        Interpretation of ``bias`` when ``bias_unit`` is ``"mA"``.
+
+    Notes
+    -----
+    The resulting linear map is ``Flow_820 = m*DP + c`` where ``m = gain*FS/R``.
+    For ``bias_unit="mA"``:
+
+    * ``bias_mode="current_pre_scale"`` assumes ``bias`` represents an input
+      current (mA) applied before ``gain`` and DP scaling, giving
+      ``c = (gain*FS/16) * bias``.
+    * ``bias_mode="flow_output"`` treats ``bias`` as a current offset applied
+      directly to the flow output, yielding ``c = (FS/16) * bias``.
     """
-    m = float(gain) * float(full_scale_tph) / float(range_mbar)
-    c = float(bias) if bias_unit.lower() == "tph" else float(bias) * float(full_scale_tph) / 100.0
+    R = float(range_mbar)
+    FS = float(full_scale_tph)
+    g = float(gain)
+    m = g * FS / R
+    u = (bias_unit or "tph").lower()
+    if u == "tph":
+        c = float(bias)
+    elif u in ("percent", "%", "pct"):
+        c = float(bias) * FS / 100.0
+    elif u in ("ma", "mA", "MA"):
+        bma = float(bias)
+        if (bias_mode or "current_pre_scale") == "current_pre_scale":
+            c = (g * FS / 16.0) * bma
+        else:
+            c = (FS / 16.0) * bma
+    else:
+        raise ValueError(f"Unsupported bias_unit '{bias_unit}'")
     return m, c
