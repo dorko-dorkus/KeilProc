@@ -272,17 +272,21 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                         thermo_source = {"source": "per_port", "column": col}
                 except Exception:
                     pass
-        try:
-            if T_K and T_K > 0:
-                # Ideal-gas density at traverse plane (prefer plane static)
-                P_use = float(p_s_mean) if p_s_mean else float(baro_pa)
-                rho_used = P_use / (287.05 * float(T_K))
-                # sanity: density must be in [0.2, 2.0] kg/m^3 for hot PA; if not, abort loudly
-                if not (0.2 <= rho_used <= 2.0):
-                    raise ValueError(
-                        f"implausible density {rho_used:.6f} kg/m^3 (P_use={P_use:.1f} Pa, T_K={T_K:.2f}). "
-                        f"Check plane static: if p_s looked like gauge, it must be baro+static_gauge."
-                    )
+        if T_K and T_K > 0:
+            # Ideal-gas density at traverse plane (prefer plane static)
+            P_use = float(p_s_mean) if p_s_mean else float(baro_pa)
+            rho_used = P_use / (287.05 * float(T_K))
+            # sanity: density must be in [0.2, 2.0] kg/m^3 for hot PA; if not, ABORT
+            if not (0.2 <= rho_used <= 2.0):
+                msg = (
+                    f"FATAL: implausible density {rho_used:.6f} kg/m^3 "
+                    f"(P_use={P_use:.1f} Pa, T_K={T_K:.2f}). "
+                    f"Likely using GAUGE static as absolute. "
+                    f"Ensure p_s = baro + Static(gauge)."
+                )
+                logger.error(msg)
+                raise SystemExit(msg)
+            try:
                 venturi_path = build_venturi_result(
                     outdir,
                     beta=beta,
@@ -296,11 +300,9 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 # Recompute duct totals so v̄, Q, m_dot match this rho; pass r (A_s/A_t)
                 r_ar = (1.0 / (beta * beta)) if beta else None
                 recompute_duct_result_with_rho(outdir, rho_used, r_area_ratio=r_ar)
-        except Exception as _e:  # pragma: no cover - defensive
-            # Allow density sanity check to abort the run
-            if isinstance(_e, ValueError):
+            except Exception:  # pragma: no cover - defensive
+                logger.error("FATAL: Venturi curve build/recompute failed", exc_info=True)
                 raise
-            logger.warning("Venturi curve build skipped: %s", _e)
     # Optional transmitter setpoints
     sp_csv = cfg.setpoints_csv or (site.defaults.get("setpoints_csv") if site and site.defaults else None)
     # Use the extracted overlay (workbook mode) by default
