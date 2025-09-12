@@ -452,6 +452,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     summary["m_820"] = cal.get("m_820")
     summary["c_820"] = cal.get("c_820")
     summary["dp_range_mbar"] = cal.get("range_mbar")
+    summary["operating_band_mbar"] = (tx_meta or {}).get("operating_band_mbar")
     (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
 
     # ---------------------- Single PDF report ------------------------
