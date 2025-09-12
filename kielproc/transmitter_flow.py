@@ -133,17 +133,43 @@ def write_lookup_outputs(
     ref_csv = outdir / "transmitter_lookup_reference.csv"
     ref.to_csv(ref_csv, index=False)
     # data side (optional)
-    overlay_csv = None; combined_csv = None
-    overlay = None
+    overlay_csv = None
+    overlay = pd.DataFrame(
+        columns=[
+            "data_DP_mbar",
+            "data_Flow_UIC_tph",
+            "data_Flow_820_tph",
+            "data_Flow_err_820_minus_UIC_tph",
+        ]
+    )
     if logger_csv and Path(logger_csv).exists():
         df_log = pd.read_csv(logger_csv)
         overlay = build_data_overlay(cal, df_log, dp_col=dp_col, dp_unit_hint=dp_unit_hint)
         overlay_csv = outdir / "transmitter_lookup_data.csv"
         overlay.to_csv(overlay_csv, index=False)
-        # combined view (constant left, data right)
-        combined = pd.concat([ref, overlay], axis=1)
-        combined_csv = outdir / "transmitter_lookup_combined.csv"
-        combined.to_csv(combined_csv, index=False)
+    # combined vertical union with source flags
+    ref_blk = ref.copy()
+    ref_blk["source"] = "reference"
+    ref_blk["range_mbar"] = span
+    ov_blk = overlay.copy()
+    ov_blk["source"] = "overlay"
+    ov_blk["range_mbar"] = span
+    combined = pd.concat([ref_blk, ov_blk], axis=0, ignore_index=True)
+    combined_csv = outdir / "transmitter_lookup_combined.csv"
+    combined.to_csv(combined_csv, index=False)
+
+    # compute operating band from overlay DP percentiles if any data
+    op_band = None
+    try:
+        dp_vals = pd.to_numeric(overlay.get("data_DP_mbar"), errors="coerce").dropna().to_numpy()
+        if dp_vals.size > 0:
+            op_band = {
+                "p5_mbar": float(np.percentile(dp_vals, 5)),
+                "p50_mbar": float(np.percentile(dp_vals, 50)),
+                "p95_mbar": float(np.percentile(dp_vals, 95)),
+            }
+    except Exception:
+        op_band = None
     meta = {
         "season": season,
         "calibration": {
@@ -155,7 +181,8 @@ def write_lookup_outputs(
         },
         "reference_csv": str(ref_csv),
         "overlay_csv": (str(overlay_csv) if overlay_csv else None),
-        "combined_csv": (str(combined_csv) if combined_csv else None),
+        "combined_csv": str(combined_csv),
+        "operating_band_mbar": op_band,
     }
     (outdir / "transmitter_lookup_meta.json").write_text(json.dumps(meta, indent=2))
     return meta
