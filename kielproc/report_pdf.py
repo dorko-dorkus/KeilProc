@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
+from typing import Optional, Tuple
 
 
 def _load_json(p: Path) -> dict:
@@ -12,6 +13,41 @@ def _load_json(p: Path) -> dict:
         return json.loads(Path(p).read_text())
     except Exception:
         return {}
+
+
+def _load_tx_tables(outdir: Path) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+    """Return (combined, data_only, ref_only) if present (any may be None)."""
+    outdir = Path(outdir)
+    comb_p = outdir / "transmitter_lookup_combined.csv"
+    data_p = outdir / "transmitter_lookup_data.csv"
+    ref_p  = outdir / "transmitter_lookup_reference.csv"
+    comb = pd.read_csv(comb_p) if comb_p.exists() else None
+    data = pd.read_csv(data_p) if data_p.exists() else None
+    ref  = pd.read_csv(ref_p)  if ref_p.exists()  else None
+    return comb, data, ref
+
+
+def _overlay_dp_series(comb: Optional[pd.DataFrame], data: Optional[pd.DataFrame]) -> pd.Series:
+    """Extract overlay DP vector robustly from either combined or data table."""
+    if comb is not None:
+        if "data_DP_mbar" in comb.columns:  # side-by-side shape
+            s = pd.to_numeric(comb["data_DP_mbar"], errors="coerce").dropna()
+            if s.size > 0:
+                return s
+        if "DP_mbar" in comb.columns:       # vertical union shape
+            df = comb
+            if "source" in df.columns:
+                df = df[df["source"].astype(str).str.lower() == "overlay"]
+            elif "is_reference" in df.columns:
+                df = df[df["is_reference"] == False]
+            s = pd.to_numeric(df["DP_mbar"], errors="coerce").dropna()
+            if s.size > 0:
+                return s
+    if data is not None and "data_DP_mbar" in data.columns:
+        s = pd.to_numeric(data["data_DP_mbar"], errors="coerce").dropna()
+        if s.size > 0:
+            return s
+    return pd.Series(dtype=float)
 
 
 def _fig_text(title: str, lines: list[str]) -> plt.Figure:
@@ -134,32 +170,19 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     baro_line = f"{baro:.0f} Pa" if isinstance(baro, (int,float)) else "n/a"
 
     # ---------- Overlay stats ----------
-    # Resolve combined or data CSV robustly
-    comb_local = Path(outdir) / "_integrated" / "transmitter_lookup_combined.csv"
-    if not comb_local.exists():
-        comb_local = Path(outdir) / "transmitter_lookup_combined.csv"
-    data_local = Path(outdir) / "_integrated" / "transmitter_lookup_data.csv"
-    if not data_local.exists():
-        data_local = Path(outdir) / "transmitter_lookup_data.csv"
-    overlay_csv = str(comb_local if comb_local.exists() else (data_local if data_local.exists() else ""))
-    if not overlay_csv:
-        overlay_csv = meta.get("combined_csv") or meta.get("overlay_csv")
-    n = 0; dp_min = dp_max = None; mean_abs = worst_abs = None
-    df = None
-    if overlay_csv and Path(overlay_csv).exists():
-        try:
-            dd = pd.read_csv(Path(overlay_csv))
-        except Exception:
-            dd = None
-        if isinstance(dd, pd.DataFrame) and {"data_DP_mbar","data_Flow_UIC_tph","data_Flow_820_tph"}.issubset(dd.columns):
-            df = dd.dropna(subset=["data_DP_mbar","data_Flow_UIC_tph","data_Flow_820_tph"])
-            if not df.empty:
-                n = int(df.shape[0])
-                dp_min = float(df["data_DP_mbar"].min())
-                dp_max = float(df["data_DP_mbar"].max())
-                err = (df["data_Flow_820_tph"] - df["data_Flow_UIC_tph"]).to_numpy()
-                mean_abs = float(np.nanmean(np.abs(err)))
-                worst_abs = float(np.nanmax(np.abs(err)))
+    comb, data, ref = _load_tx_tables(outdir)
+    overlay_dp = _overlay_dp_series(comb, data)
+    n = int(overlay_dp.size)
+    dp_min = float(overlay_dp.min()) if n > 0 else None
+    dp_max = float(overlay_dp.max()) if n > 0 else None
+    mean_abs = worst_abs = None
+    df_err = comb if comb is not None else data
+    if df_err is not None and {"data_Flow_UIC_tph","data_Flow_820_tph"}.issubset(df_err.columns):
+        err = pd.to_numeric(df_err["data_Flow_820_tph"], errors="coerce") - pd.to_numeric(df_err["data_Flow_UIC_tph"], errors="coerce")
+        err = err.replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
+        if err.size > 0:
+            mean_abs = float(np.nanmean(np.abs(err)))
+            worst_abs = float(np.nanmax(np.abs(err)))
 
     # crossover DP (informative)
     dp_cross = None
@@ -191,9 +214,9 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     ob = meta.get("operating_band_mbar") or s.get("operating_band_mbar") or {}
     lo = ob.get("p5_mbar"); hi = ob.get("p95_mbar")
     if not (isinstance(lo,(int,float)) and isinstance(hi,(int,float))):
-        if n > 0 and df is not None and "data_DP_mbar" in df.columns:
-            lo = float(np.percentile(df["data_DP_mbar"], 5.0))
-            hi = float(np.percentile(df["data_DP_mbar"], 95.0))
+        if n > 0:
+            lo = float(np.percentile(overlay_dp, 5.0))
+            hi = float(np.percentile(overlay_dp, 95.0))
             if hi - lo < 1e-6:
                 hi = lo + 0.2
         else:
@@ -443,20 +466,11 @@ def _page_band_table_and_verdict(outdir: Path, summary_path: Path) -> plt.Figure
     ob = meta.get("operating_band_mbar") or s.get("operating_band_mbar") or {}
     lo = ob.get("p5_mbar"); hi = ob.get("p95_mbar")
     if not (isinstance(lo, (int, float)) and isinstance(hi, (int, float))):
-        comb = Path(outdir) / "_integrated" / "transmitter_lookup_combined.csv"
-        if not comb.exists():
-            comb = Path(outdir) / "transmitter_lookup_combined.csv"
-        data = Path(outdir) / "_integrated" / "transmitter_lookup_data.csv"
-        if not data.exists():
-            data = Path(outdir) / "transmitter_lookup_data.csv"
-        if comb.exists() and "data_DP_mbar" in pd.read_csv(comb, nrows=1).columns:
-            df = pd.read_csv(comb)
-            dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
-            lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
-        elif data.exists() and "data_DP_mbar" in pd.read_csv(data, nrows=1).columns:
-            df = pd.read_csv(data)
-            dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
-            lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
+        comb, data, ref = _load_tx_tables(outdir)
+        overlay_dp = _overlay_dp_series(comb, data)
+        if overlay_dp.size > 0:
+            lo = float(np.percentile(overlay_dp, 5.0))
+            hi = float(np.percentile(overlay_dp, 95.0))
         else:
             lo, hi = 2.0, 6.0
     lo = max(1e-6, lo); hi = max(lo + 1e-6, hi); mid = 0.5*(lo+hi)
@@ -524,20 +538,11 @@ def _fig_error_bars(outdir: Path, summary_path: Path) -> plt.Figure:
     ob = meta.get("operating_band_mbar") or s.get("operating_band_mbar") or {}
     lo = ob.get("p5_mbar"); hi = ob.get("p95_mbar")
     if not (isinstance(lo, (int, float)) and isinstance(hi, (int, float))):
-        comb = Path(outdir) / "_integrated" / "transmitter_lookup_combined.csv"
-        if not comb.exists():
-            comb = Path(outdir) / "transmitter_lookup_combined.csv"
-        data = Path(outdir) / "_integrated" / "transmitter_lookup_data.csv"
-        if not data.exists():
-            data = Path(outdir) / "transmitter_lookup_data.csv"
-        if comb.exists() and "data_DP_mbar" in pd.read_csv(comb, nrows=1).columns:
-            df = pd.read_csv(comb)
-            dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
-            lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
-        elif data.exists() and "data_DP_mbar" in pd.read_csv(data, nrows=1).columns:
-            df = pd.read_csv(data)
-            dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
-            lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
+        comb, data, ref = _load_tx_tables(outdir)
+        overlay_dp = _overlay_dp_series(comb, data)
+        if overlay_dp.size > 0:
+            lo = float(np.percentile(overlay_dp, 5.0))
+            hi = float(np.percentile(overlay_dp, 95.0))
         else:
             lo, hi = 2.0, 6.0
     lo = max(1e-6, lo); hi = max(lo + 1e-6, hi)
