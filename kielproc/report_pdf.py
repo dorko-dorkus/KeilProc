@@ -123,25 +123,28 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     s = _load_json(summary_path)
     meta = _load_json(Path(outdir) / "transmitter_lookup_meta.json")
 
-    # Calibration / season
-    season = meta.get("season", "")
+    # Calibration / season (prefer meta, fallback to summary)
+    season = meta.get("season") or s.get("season") or ""
     cal = meta.get("calibration", {}) or {}
-    K = cal.get("K_uic", None); m = cal.get("m_820", None); c = cal.get("c_820", None)
-    baro = _load_json(summary_path).get("baro_pa", None)
+    K = cal.get("K_uic", s.get("K_uic"))
+    m = cal.get("m_820", s.get("m_820"))
+    c = cal.get("c_820", s.get("c_820"))
+    rng = cal.get("range_mbar", s.get("dp_range_mbar"))
+    baro = s.get("baro_pa", None)
     baro_line = f"{baro:.0f} Pa" if isinstance(baro, (int,float)) else "n/a"
 
     # ---------- Overlay stats ----------
-    overlay_csv = meta.get("overlay_csv")
+    # overlay: prefer local combined CSV under outdir (robust to absolute paths)
+    overlay_csv = str(Path(outdir) / "transmitter_lookup_combined.csv")
+    if not Path(overlay_csv).exists():
+        overlay_csv = meta.get("combined_csv") or meta.get("overlay_csv")
     n = 0; dp_min = dp_max = None; mean_abs = worst_abs = None
     df = None
     if overlay_csv and Path(overlay_csv).exists():
         try:
-            dd = pd.read_csv(Path(outdir) / "transmitter_lookup_combined.csv")
+            dd = pd.read_csv(Path(overlay_csv))
         except Exception:
-            try:
-                dd = pd.read_csv(Path(overlay_csv))
-            except Exception:
-                dd = None
+            dd = None
         if isinstance(dd, pd.DataFrame) and {"data_DP_mbar","data_Flow_UIC_tph","data_Flow_820_tph"}.issubset(dd.columns):
             df = dd.dropna(subset=["data_DP_mbar","data_Flow_UIC_tph","data_Flow_820_tph"])
             if not df.empty:
@@ -268,14 +271,21 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     # (header "Summary" provided separately by _fig_text)
     L: list[str] = []
     Ktxt = f"{K:.4f} t/h per sqrt(mbar)" if isinstance(K,(int,float)) else "n/a"
-    rng = s.get("dp_range_mbar"); prof = s.get("profile_meta") or {}
-    fs  = prof.get("full_scale_tph", "n/a"); bu = prof.get("bias_unit", "tph")
-    L.append("Season: {}   Calibration: K(UIC)={}   m(820)={}   c(820)={}   range={} mbar   FS={} t/h (bias unit={})"\
+    prof = s.get("profile_meta") or {}
+    fs  = prof.get("full_scale_tph")
+    bu  = prof.get("bias_unit")
+    extra = []
+    if isinstance(fs,(int,float)):
+        extra.append(f"FS={fs:.6g} t/h")
+    if bu:
+        extra.append(f"bias unit={bu}")
+    extra_txt = ("   " + " ".join(extra)) if extra else ""
+    L.append("Season: {}   K(UIC)={}   820: m={}  c={}   range={} mbar{}"
              .format(season or "n/a", Ktxt,
-                     (f"{m:.6g}" if m is not None else "n/a"),
-                     (f"{c:.6g}" if c is not None else "n/a"),
-                     (f"{rng:.6g}" if rng is not None else "n/a"),
-                     fs, bu))
+                     (f"{m:.6g}" if isinstance(m,(int,float)) else "n/a"),
+                     (f"{c:.6g}" if isinstance(c,(int,float)) else "n/a"),
+                     (f"{rng:.6g}" if isinstance(rng,(int,float)) else "n/a"),
+                     extra_txt))
     L.append(f"Site: {s.get('site_name','')}")
     L.append(f"Barometric pressure: {baro_line}")
     # Temperature & density (if present)
@@ -327,7 +337,7 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     rec = [
         "Recommendations (local linearization over operating band):",
         f"  Band: {lo:.3f}–{hi:.3f} mbar   (mid {mid:.3f})",
-        f"  Current 820: m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}",
+        f"  Current 820: m={(f'{m:.6g}' if isinstance(m,(int,float)) else 'n/a')}  c={(f'{c:.6g}' if isinstance(c,(int,float)) else 'n/a')}",
         f"  Proposed 820 (minimax L_inf): m*={m_rec:.4f}  c*={c_rec:.4f}  (dm={(m_rec-(m or 0.0)):+.4f}  dc={(c_rec-(c or 0.0)):+.4f})",
         f"    Errors — Current: mean={cur_mean:.3f}, worst={cur_worst:.3f}@{cur_wdp:.3f} mbar",
         f"              L_inf:  mean={inf_mean:.3f}, worst={inf_worst:.3f}@{inf_wdp:.3f} mbar",
