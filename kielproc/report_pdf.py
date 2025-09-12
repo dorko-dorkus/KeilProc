@@ -460,8 +460,11 @@ def _page_data_quality(outdir: Path) -> plt.Figure:
 def _page_band_table_and_verdict(outdir: Path, summary_path: Path) -> plt.Figure:
     s = json.loads(Path(summary_path).read_text())
     meta = _load_json(Path(outdir) / "transmitter_lookup_meta.json")
-    K = float(s.get("K") or s.get("K_uic") or 0.0)
-    m = s.get("m_820"); c = s.get("c_820")
+    cal = (meta.get("calibration") or {})
+    # Prefer meta; fallback to summary for all Tx params
+    K = float(cal.get("K_uic") or s.get("K") or s.get("K_uic") or 0.0)
+    m = (cal.get("m_820") or s.get("m_820"))
+    c = (cal.get("c_820") or s.get("c_820"))
     # operating band: prefer stored, else compute from overlay, else default
     ob = meta.get("operating_band_mbar") or s.get("operating_band_mbar") or {}
     lo = ob.get("p5_mbar"); hi = ob.get("p95_mbar")
@@ -515,7 +518,8 @@ def _page_band_table_and_verdict(outdir: Path, summary_path: Path) -> plt.Figure
     L.append(
         f"  Thresholds: mean|e|<= {thr_mean:.3f} t/h, worst|e|<= {thr_worst:.3f} t/h  ->  Verdict: {'PASS' if verdict_ok else 'FAIL'}"
     )
-    L.append("  Configured 820:  m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
+    # Use unambiguous wording: 'Configured'
+    L.append("  820 (configured):  m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
         float(m or 0.0), float(c or 0.0), cur_mean, cur_worst))
     L.append("  Tangent:  m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
         m_tan, c_tan, tan_mean, tan_worst))
@@ -532,8 +536,10 @@ def _page_band_table_and_verdict(outdir: Path, summary_path: Path) -> plt.Figure
 def _fig_error_bars(outdir: Path, summary_path: Path) -> plt.Figure:
     s = json.loads(Path(summary_path).read_text())
     meta = _load_json(Path(outdir) / "transmitter_lookup_meta.json")
-    K = float(s.get("K") or s.get("K_uic") or 0.0)
-    m = s.get("m_820"); c = s.get("c_820")
+    cal = (meta.get("calibration") or {})
+    K = float(cal.get("K_uic") or s.get("K") or s.get("K_uic") or 0.0)
+    m = (cal.get("m_820") or s.get("m_820"))
+    c = (cal.get("c_820") or s.get("c_820"))
     # operating band: prefer stored, else compute from overlay, else default
     ob = meta.get("operating_band_mbar") or s.get("operating_band_mbar") or {}
     lo = ob.get("p5_mbar"); hi = ob.get("p95_mbar")
@@ -566,7 +572,7 @@ def _fig_error_bars(outdir: Path, summary_path: Path) -> plt.Figure:
     cur = stats(float(m or 0.0), float(c or 0.0))
     l2  = stats(float(m_l2), float(c_l2))
     linf= stats(float(best["m"]), float(best["c"]))
-    labels = ["Configured 820", "L2", "L_inf (Proposed)"]
+    labels = ["820 (configured)", "L2", "L_inf (Proposed)"]
     means  = [cur[0], l2[0], linf[0]]
     worsts = [cur[1], l2[1], linf[1]]
     fig = plt.figure(figsize=(11.69, 8.27)); ax = fig.add_subplot(111)
@@ -658,23 +664,27 @@ def _page_port_weights(outdir: Path) -> plt.Figure:
 # ---------- NEW: Transmitter details ----------
 def _page_tx_details(outdir: Path, summary_path: Path) -> plt.Figure:
     s = json.loads(Path(summary_path).read_text())
-    m = s.get("m_820"); c = s.get("c_820")
-    span = None
-    for name in ["transmitter_lookup_combined.csv", "transmitter_lookup_reference.csv"]:
-        for base in [Path(outdir) / "_integrated", Path(outdir)]:
-            p = base / name
-            if p.exists():
-                df = pd.read_csv(p)
-                if "range_mbar" in df.columns:
-                    vals = pd.to_numeric(df["range_mbar"], errors="coerce").dropna()
-                    if len(vals):
-                        span = float(vals.iloc[0])
-                        break
-        if span is not None:
-            break
+    meta = _load_json(Path(outdir) / "transmitter_lookup_meta.json")
+    cal = (meta.get("calibration") or {})
+    m = (cal.get("m_820") or s.get("m_820"))
+    c = (cal.get("c_820") or s.get("c_820"))
+    span = cal.get("range_mbar")
+    if span is None:
+        for name in ["transmitter_lookup_combined.csv", "transmitter_lookup_reference.csv"]:
+            for base in [Path(outdir) / "_integrated", Path(outdir)]:
+                p = base / name
+                if p.exists():
+                    df = pd.read_csv(p)
+                    if "range_mbar" in df.columns:
+                        vals = pd.to_numeric(df["range_mbar"], errors="coerce").dropna()
+                        if len(vals):
+                            span = float(vals.iloc[0])
+                            break
+            if span is not None:
+                break
     L = []
     L.append("Transmitter details:")
-    L.append(f"  • Configured 820 settings: m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}")
+    L.append(f"  • 820 (configured): m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}")
     L.append(f"  • DP span (range_mbar): {span if span is not None else 'n/a'}")
     L.append("  • Proposed: see Operating band & recommendations page (L_inf row).")
     return _fig_text("Transmitter", L)
