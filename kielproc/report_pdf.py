@@ -326,13 +326,16 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     rho_src = s.get("rho_source")
     if isinstance(T_K_val, (int, float)):
         L.append(f"Process temperature: {T_K_val:.2f} K ({T_K_val-273.15:.1f} C)")
-    if isinstance(rho_val, (int, float)):
-        line = f"rho used: {rho_val:.4f} kg/m3"
-        if rho_src:
-            line += f"  [{rho_src}]"
-        if rho_val < 0.2 or rho_val > 2.0:
-            line += "  (WARNING: implausible -- check baro/T units)"
-        L.append(line)
+    L.append(
+        "Density ρ = {} kg·m⁻³  (source: {}; p_s_used = {} Pa; mode = {})".format(
+            s.get("rho_kg_m3", "n/a"),
+            s.get("rho_source", "n/a"),
+            s.get("p_plane_static_pa_mean", "n/a"),
+            s.get("static_source_mode", "n/a"),
+        )
+    )
+    if isinstance(rho_val, (int, float)) and (rho_val < 0.2 or rho_val > 2.0):
+        L.append("WARNING: implausible density — check baro/T units.")
     if n > 0:
         L.append("")  # spacer
         L.append("Overlay (Piccolo-derived DP):")
