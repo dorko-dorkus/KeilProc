@@ -150,9 +150,11 @@ def write_lookup_outputs(
     # combined vertical union with source flags
     ref_blk = ref.copy()
     ref_blk["source"] = "reference"
+    ref_blk["is_reference"] = True
     ref_blk["range_mbar"] = span
     ov_blk = overlay.copy()
     ov_blk["source"] = "overlay"
+    ov_blk["is_reference"] = False
     ov_blk["range_mbar"] = span
     combined = pd.concat([ref_blk, ov_blk], axis=0, ignore_index=True)
     combined_csv = outdir / "transmitter_lookup_combined.csv"
