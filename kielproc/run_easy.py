@@ -70,6 +70,8 @@ class RunConfig:
     setpoints_slope_sign: int = +1
     # Season selector (sole user input for flow lookup)
     season: str = "summer"              # "summer" | "winter"
+    # Static source mode for density at traverse plane
+    static_source_mode: str = "ring_gauge"  # "ring_gauge" | "wall_gauge" | "wall_abs" | "baro_only"
     # Optional site defaults: calib_820_summer / calib_820_winter
     lookup_dp_max_mbar: float = 10.0
 
