@@ -145,8 +145,14 @@ def write_lookup_outputs(
         combined_csv = outdir / "transmitter_lookup_combined.csv"
         combined.to_csv(combined_csv, index=False)
     meta = {
-        "season": cal.season,
-        "calibration": {"K_uic": cal.K_uic, "m_820": cal.m_820, "c_820": cal.c_820, "source": cal.source},
+        "season": season,
+        "calibration": {
+            "K_uic": float(cal.K_uic),
+            "m_820": float(cal.m_820),
+            "c_820": float(cal.c_820),
+            "range_mbar": float(span),
+            "source": cal.source,
+        },
         "reference_csv": str(ref_csv),
         "overlay_csv": (str(overlay_csv) if overlay_csv else None),
         "combined_csv": (str(combined_csv) if combined_csv else None),
