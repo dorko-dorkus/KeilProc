@@ -330,7 +330,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     if overlay_expected and not (sp_csv and Path(sp_csv).exists()):
         raise RuntimeError("Overlay expected from workbook, but piccolo_overlay.csv not found.")
 
-    flow_lookup = write_lookup_outputs(
+    tx_meta = write_lookup_outputs(
         outdir,
         season=cfg.season,
         site_defaults=(site.defaults or {}),
@@ -442,9 +442,16 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
             "csv": (str(piccolo_overlay_csv) if piccolo_overlay_csv else None),
         },
         "setpoints": sp,
-        "flow_lookup": flow_lookup,
         "venturi_result_json": (str(venturi_path) if venturi_path else None),
     }
+    # capture flow lookup meta paths for audit
+    summary["flow_lookup"] = tx_meta
+    # ALSO expose transmitter details at top-level for legacy report readers
+    cal = (tx_meta or {}).get("calibration", {})
+    summary["season"] = (tx_meta or {}).get("season")
+    summary["m_820"] = cal.get("m_820")
+    summary["c_820"] = cal.get("c_820")
+    summary["dp_range_mbar"] = cal.get("range_mbar")
     (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
 
     # ---------------------- Single PDF report ------------------------
