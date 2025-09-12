@@ -57,6 +57,7 @@ def test_run_all_produces_outputs(tmp_path):
     assert Path(summary["flow_lookup"]["combined_csv"]).exists()
     assert summary["baro_pa"] == 101_325.0
     assert summary["site_name"] == "SiteA"
+    assert summary["K_uic"] == 33.5
     # Venturi result files present and sane
     vr = Path(summary["venturi_result_json"])
     assert vr.exists()
@@ -117,3 +118,4 @@ def test_run_all_accepts_workbook(tmp_path):
     # Barometric pressure extracted from workbook Data sheet
     assert summary["baro_pa"] == 101_600.0
     assert summary["baro_source"]["source"] == "workbook"
+    assert summary["K_uic"] == 33.5
