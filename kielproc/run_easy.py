@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, Tuple
 import json, math, logging
 import hashlib, time, os
 import pandas as pd
+import numpy as np
 from .aggregate import RunConfig as IntegratorConfig, integrate_run
 from .geometry import Geometry, r_ratio, beta_from_geometry, duct_area
 from .transmitter import compute_and_write_setpoints, TxParams
@@ -23,6 +24,8 @@ from .tools.legacy_overlay import (
 )
 from .tools.venturi_builder import build_venturi_result
 from .tools.recalc import recompute_duct_result_with_rho
+
+R_AIR = 287.05  # J/(kg*K)
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +155,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     thermo_source: Dict[str, Any] = {"source": "absent"}
     T_K: Optional[float] = None
     geom, r, beta, dims, As, At = _resolve_geometry(site)
+    A1 = As
     if dims is None:
         raise ValueError("Geometry required: provide duct width+height or duct area.")
     H, W = dims
@@ -224,7 +228,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     )
     outdir = Path(cfg.output_dir) / "_integrated"
     outdir.mkdir(parents=True, exist_ok=True)
-    (outdir / "per_port.csv").write_text(res["per_port"].to_csv(index=False))
+    per_port_df = res.get("per_port")
+    (outdir / "per_port.csv").write_text(per_port_df.to_csv(index=False))
     (outdir / "duct_result.json").write_text(json.dumps(res.get("duct", {}), indent=2))
     (outdir / "normalize_meta.json").write_text(json.dumps(res.get("normalize_meta", {}), indent=2))
     piccolo_overlay_csv = None
@@ -246,15 +251,34 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     venturi = {}
     venturi_path: Optional[Path] = None
     rho_used: Optional[float] = None
-    # plane static mean from per_port (preferred)
-    p_s_mean = None
-    try:
-        pp = pd.read_csv(outdir / "per_port.csv")
-        if "p_s_pa" in pp.columns:
-            p_s_mean = float(pd.to_numeric(pp["p_s_pa"], errors="coerce").dropna().mean())
-    except Exception:
-        p_s_mean = None
-    if (beta is not None) and (As is not None) and (p_s_mean or baro_pa):
+    rho_src: str = "unknown"
+    # ---- Plane static selection & reconstruction ----
+    mode = getattr(cfg, "static_source_mode", "ring_gauge")
+    ps_abs_col = []
+    ps_gauge_col = []
+    if per_port_df is not None:
+        ps_abs_col = [c for c in per_port_df.columns if c.lower() in ("static_abs_pa", "static_absolute_pa")]
+        ps_gauge_col = [c for c in per_port_df.columns if c.lower() in ("static_gauge_pa", "static_pa", "static")]
+    p_plane_static_pa: float | None = None
+    p_static_source_note = ""
+    if mode == "wall_abs" and ps_abs_col:
+        p_plane_static_pa = float(np.nanmean(per_port_df[ps_abs_col[0]].to_numpy()))
+        p_static_source_note = "wall_tap_absolute"
+    elif mode in ("wall_gauge", "ring_gauge") and ps_gauge_col:
+        p_plane_static_pa = float(baro_pa + np.nanmean(per_port_df[ps_gauge_col[0]].to_numpy()))
+        p_static_source_note = (
+            "wall_tap_gauge+baro" if mode == "wall_gauge" else "probe_ring_gauge+baro"
+        )
+    elif ps_abs_col:
+        p_plane_static_pa = float(np.nanmean(per_port_df[ps_abs_col[0]].to_numpy()))
+        p_static_source_note = "auto:absolute_static_column"
+    elif ps_gauge_col:
+        p_plane_static_pa = float(baro_pa + np.nanmean(per_port_df[ps_gauge_col[0]].to_numpy()))
+        p_static_source_note = "auto:gauge_static_column+baro"
+    else:
+        p_plane_static_pa = float(baro_pa)
+        p_static_source_note = "barometric_only (no static column)"
+    if (beta is not None) and (As is not None) and p_plane_static_pa:
         # If workbook didn't supply temp, try duct result mean temp
         if T_K is None:
             duct = res.get("duct", {}) or {}
@@ -264,25 +288,21 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
             elif isinstance(duct.get("temp_C_mean"), (int, float)):
                 T_K = float(duct.get("temp_C_mean")) + 273.15
                 thermo_source = {"source": "duct_result", "key": "temp_C_mean"}
-        if T_K is None:
-            pp = res.get("per_port")
-            if pp is not None:
-                try:
-                    col = "T_C_mean"
-                    if col in pp.columns:
-                        T_K = float(pp[col].mean()) + 273.15
-                        thermo_source = {"source": "per_port", "column": col}
-                except Exception:
-                    pass
+        if T_K is None and per_port_df is not None:
+            try:
+                col = "T_C_mean"
+                if col in per_port_df.columns:
+                    T_K = float(per_port_df[col].mean()) + 273.15
+                    thermo_source = {"source": "per_port", "column": col}
+            except Exception:
+                pass
         if T_K and T_K > 0:
-            # Ideal-gas density at traverse plane (prefer plane static)
-            P_use = float(p_s_mean) if p_s_mean else float(baro_pa)
-            rho_used = P_use / (287.05 * float(T_K))
-            # sanity: density must be in [0.2, 2.0] kg/m^3 for hot PA; if not, ABORT
+            rho_used = float(p_plane_static_pa) / (R_AIR * float(T_K))
+            rho_src = f"ideal_gas_TK @ {p_static_source_note}"
             if not (0.2 <= rho_used <= 2.0):
                 msg = (
                     f"FATAL: implausible density {rho_used:.6f} kg/m^3 "
-                    f"(P_use={P_use:.1f} Pa, T_K={T_K:.2f}). "
+                    f"(P_use={p_plane_static_pa:.1f} Pa, T_K={T_K:.2f}). "
                     f"Likely using GAUGE static as absolute. "
                     f"Ensure p_s = baro + Static(gauge)."
                 )
@@ -293,13 +313,12 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                     outdir,
                     beta=beta,
                     area_As_m2=As,
-                    baro_pa=P_use,
+                    baro_pa=p_plane_static_pa,
                     T_K=T_K,
                     m_dot_hint_kg_s=(res.get("duct", {}) or {}).get("m_dot_kg_s"),
                 )
                 if venturi_path:
                     venturi = json.loads(Path(venturi_path).read_text())
-                # Recompute duct totals so v̄, Q, m_dot match this rho; pass r (A_s/A_t)
                 r_ar = (1.0 / (beta * beta)) if beta else None
                 recompute_duct_result_with_rho(outdir, rho_used, r_area_ratio=r_ar)
             except Exception:  # pragma: no cover - defensive
@@ -421,12 +440,12 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "r": r,
         "beta": beta,
         "thermo_source": thermo_source,
+        "A1_m2": A1,
         "T_K": T_K,
         "rho_kg_m3": rho_used,
-        "rho_source": (
-            "ideal_gas_pT_plane_static" if (rho_used and p_s_mean) else
-            "ideal_gas_pT_baro" if rho_used else "unknown"
-        ),
+        "rho_source": rho_src,
+        "static_source_mode": mode,
+        "p_plane_static_pa_mean": p_plane_static_pa,
         # audit / repro metadata
         "inputs_manifest": input_manifest,
         "acceptance": acceptance,
