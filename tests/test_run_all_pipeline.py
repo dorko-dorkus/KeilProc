@@ -50,6 +50,8 @@ def test_run_all_produces_outputs(tmp_path):
     combined = out_dir / "_integrated" / "transmitter_lookup_combined.csv"
     assert ref.exists()
     assert combined.exists()
+    df_combined = pd.read_csv(combined)
+    assert "is_reference" in df_combined.columns
     overlay = Path(summary["flow_lookup"]["overlay_csv"])
     assert overlay.exists()
     assert Path(summary["flow_lookup"]["combined_csv"]).exists()
