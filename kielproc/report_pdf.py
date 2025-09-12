@@ -134,9 +134,15 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     baro_line = f"{baro:.0f} Pa" if isinstance(baro, (int,float)) else "n/a"
 
     # ---------- Overlay stats ----------
-    # overlay: prefer local combined CSV under outdir (robust to absolute paths)
-    overlay_csv = str(Path(outdir) / "transmitter_lookup_combined.csv")
-    if not Path(overlay_csv).exists():
+    # Resolve combined or data CSV robustly
+    comb_local = Path(outdir) / "_integrated" / "transmitter_lookup_combined.csv"
+    if not comb_local.exists():
+        comb_local = Path(outdir) / "transmitter_lookup_combined.csv"
+    data_local = Path(outdir) / "_integrated" / "transmitter_lookup_data.csv"
+    if not data_local.exists():
+        data_local = Path(outdir) / "transmitter_lookup_data.csv"
+    overlay_csv = str(comb_local if comb_local.exists() else (data_local if data_local.exists() else ""))
+    if not overlay_csv:
         overlay_csv = meta.get("combined_csv") or meta.get("overlay_csv")
     n = 0; dp_min = dp_max = None; mean_abs = worst_abs = None
     df = None
@@ -181,14 +187,17 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
         m_, c_ = np.linalg.lstsq(X, y, rcond=None)[0]
         return float(max(m_,0.0)), float(max(c_,0.0))
 
-    # operating band from overlay if available, else default
-    if n > 0 and df is not None:
-        lo = float(np.percentile(df["data_DP_mbar"], 5.0))
-        hi = float(np.percentile(df["data_DP_mbar"], 95.0))
-        if hi - lo < 1e-6:
-            hi = lo + 0.2
-    else:
-        lo, hi = 2.0, 6.0
+    # operating band: prefer meta/summary, else compute from overlay, else default
+    ob = meta.get("operating_band_mbar") or s.get("operating_band_mbar") or {}
+    lo = ob.get("p5_mbar"); hi = ob.get("p95_mbar")
+    if not (isinstance(lo,(int,float)) and isinstance(hi,(int,float))):
+        if n > 0 and df is not None and "data_DP_mbar" in df.columns:
+            lo = float(np.percentile(df["data_DP_mbar"], 5.0))
+            hi = float(np.percentile(df["data_DP_mbar"], 95.0))
+            if hi - lo < 1e-6:
+                hi = lo + 0.2
+        else:
+            lo, hi = 2.0, 6.0
     lo = max(1e-6, lo); hi = max(lo+1e-6, hi)
     mid = 0.5*(lo+hi)
 
@@ -280,7 +289,7 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     if bu:
         extra.append(f"bias unit={bu}")
     extra_txt = ("   " + " ".join(extra)) if extra else ""
-    L.append("Season: {}   K(UIC)={}   820: m={}  c={}   range={} mbar{}"
+    L.append("Season: {}   K(UIC)={}   820 (configured): m={}  c={}   span={} mbar{}"
              .format(season or "n/a", Ktxt,
                      (f"{m:.6g}" if isinstance(m,(int,float)) else "n/a"),
                      (f"{c:.6g}" if isinstance(c,(int,float)) else "n/a"),
@@ -325,7 +334,7 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     else:
         L.append("Overlay: not present (reference curves only).")
     if dp_cross is not None:
-        L.append(f"Crossover (current 820 = UIC): DP ~= {dp_cross:.3f} mbar")
+        L.append(f"Crossover (configured 820 = UIC): DP ~= {dp_cross:.3f} mbar")
     L.append("")  # spacer
     L.append("Context & Method:")
     L.append("  • UIC: Flow_UIC = K*sqrt(DP)  (K in t/h per sqrt(mbar), DP in mbar)")
@@ -337,9 +346,9 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
     rec = [
         "Recommendations (local linearization over operating band):",
         f"  Band: {lo:.3f}–{hi:.3f} mbar   (mid {mid:.3f})",
-        f"  Current 820: m={(f'{m:.6g}' if isinstance(m,(int,float)) else 'n/a')}  c={(f'{c:.6g}' if isinstance(c,(int,float)) else 'n/a')}",
+        f"  820 (configured): m={(f'{m:.6g}' if isinstance(m,(int,float)) else 'n/a')}  c={(f'{c:.6g}' if isinstance(c,(int,float)) else 'n/a')}",
         f"  Proposed 820 (minimax L_inf): m*={m_rec:.4f}  c*={c_rec:.4f}  (dm={(m_rec-(m or 0.0)):+.4f}  dc={(c_rec-(c or 0.0)):+.4f})",
-        f"    Errors — Current: mean={cur_mean:.3f}, worst={cur_worst:.3f}@{cur_wdp:.3f} mbar",
+        f"    Errors — Configured: mean={cur_mean:.3f}, worst={cur_worst:.3f}@{cur_wdp:.3f} mbar",
         f"              L_inf:  mean={inf_mean:.3f}, worst={inf_worst:.3f}@{inf_wdp:.3f} mbar",
         f"    Alternatives — Tangent@mid: m={m_tan:.4f}  c={c_tan:.4f}  (worst={tan_worst:.3f})",
         f"                   Secant:      m={m_sec:.4f}  c={c_sec:.4f}  (worst={sec_worst:.3f})",
@@ -429,9 +438,18 @@ def _page_band_table_and_verdict(outdir: Path, summary_path: Path) -> plt.Figure
     s = json.loads(Path(summary_path).read_text())
     K = float(s.get("K") or s.get("K_uic") or 0.0)
     m = s.get("m_820"); c = s.get("c_820")
-    comb = Path(outdir) / "transmitter_lookup_combined.csv"
+    comb = Path(outdir) / "_integrated" / "transmitter_lookup_combined.csv"
+    if not comb.exists():
+        comb = Path(outdir) / "transmitter_lookup_combined.csv"
+    data = Path(outdir) / "_integrated" / "transmitter_lookup_data.csv"
+    if not data.exists():
+        data = Path(outdir) / "transmitter_lookup_data.csv"
     if comb.exists() and "data_DP_mbar" in pd.read_csv(comb, nrows=1).columns:
         df = pd.read_csv(comb)
+        dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
+        lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
+    elif data.exists() and "data_DP_mbar" in pd.read_csv(data, nrows=1).columns:
+        df = pd.read_csv(data)
         dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
         lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
     else:
@@ -478,7 +496,7 @@ def _page_band_table_and_verdict(outdir: Path, summary_path: Path) -> plt.Figure
     L.append(
         f"  Thresholds: mean|e|<= {thr_mean:.3f} t/h, worst|e|<= {thr_worst:.3f} t/h  ->  Verdict: {'PASS' if verdict_ok else 'FAIL'}"
     )
-    L.append("  Current:  m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
+    L.append("  Configured:  m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
         float(m or 0.0), float(c or 0.0), cur_mean, cur_worst))
     L.append("  Tangent:  m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
         m_tan, c_tan, tan_mean, tan_worst))
@@ -496,9 +514,18 @@ def _fig_error_bars(outdir: Path, summary_path: Path) -> plt.Figure:
     s = json.loads(Path(summary_path).read_text())
     K = float(s.get("K") or s.get("K_uic") or 0.0)
     m = s.get("m_820"); c = s.get("c_820")
-    comb = Path(outdir) / "transmitter_lookup_combined.csv"
+    comb = Path(outdir) / "_integrated" / "transmitter_lookup_combined.csv"
+    if not comb.exists():
+        comb = Path(outdir) / "transmitter_lookup_combined.csv"
+    data = Path(outdir) / "_integrated" / "transmitter_lookup_data.csv"
+    if not data.exists():
+        data = Path(outdir) / "transmitter_lookup_data.csv"
     if comb.exists() and "data_DP_mbar" in pd.read_csv(comb, nrows=1).columns:
         df = pd.read_csv(comb)
+        dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
+        lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
+    elif data.exists() and "data_DP_mbar" in pd.read_csv(data, nrows=1).columns:
+        df = pd.read_csv(data)
         dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
         lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
     else:
@@ -523,7 +550,7 @@ def _fig_error_bars(outdir: Path, summary_path: Path) -> plt.Figure:
     cur = stats(float(m or 0.0), float(c or 0.0))
     l2  = stats(float(m_l2), float(c_l2))
     linf= stats(float(best["m"]), float(best["c"]))
-    labels = ["Current", "L2", "L_inf (Proposed)"]
+    labels = ["Configured", "L2", "L_inf (Proposed)"]
     means  = [cur[0], l2[0], linf[0]]
     worsts = [cur[1], l2[1], linf[1]]
     fig = plt.figure(figsize=(11.69, 8.27)); ax = fig.add_subplot(111)
@@ -618,16 +645,20 @@ def _page_tx_details(outdir: Path, summary_path: Path) -> plt.Figure:
     m = s.get("m_820"); c = s.get("c_820")
     span = None
     for name in ["transmitter_lookup_combined.csv", "transmitter_lookup_reference.csv"]:
-        p = Path(outdir) / name
-        if p.exists():
-            df = pd.read_csv(p)
-            if "range_mbar" in df.columns:
-                vals = pd.to_numeric(df["range_mbar"], errors="coerce").dropna()
-                if len(vals):
-                    span = float(vals.iloc[0]); break
+        for base in [Path(outdir) / "_integrated", Path(outdir)]:
+            p = base / name
+            if p.exists():
+                df = pd.read_csv(p)
+                if "range_mbar" in df.columns:
+                    vals = pd.to_numeric(df["range_mbar"], errors="coerce").dropna()
+                    if len(vals):
+                        span = float(vals.iloc[0])
+                        break
+        if span is not None:
+            break
     L = []
     L.append("Transmitter details:")
-    L.append(f"  • Current 820 settings: m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}")
+    L.append(f"  • Configured 820 settings: m={m if m is not None else 'n/a'}  c={c if c is not None else 'n/a'}")
     L.append(f"  • DP span (range_mbar): {span if span is not None else 'n/a'}")
     L.append("  • Proposed: see Operating band & recommendations page (L_inf row).")
     return _fig_text("Transmitter", L)
