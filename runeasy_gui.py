@@ -145,6 +145,20 @@ class App(tk.Tk):
         self.season.set("summer")
         self.season.grid(column=1, row=row, sticky="w", padx=6); row += 1
 
+        # Plane static source (legacy ring vs true wall), drives density convention
+        ttk.Label(frm, text="Plane static source").grid(column=0, row=row, sticky="w")
+        self.static_src = ttk.Combobox(
+            frm,
+            values=[
+                "probe_ring_gauge (+baro)",   # legacy: ring at probe, gauge
+                "wall_tap_gauge (+baro)",     # wall static, gauge
+                "wall_tap_absolute",          # wall static, absolute
+                "barometric_only"             # fallback (no static available)
+            ],
+            width=26, state="readonly")
+        self.static_src.set("probe_ring_gauge (+baro)")
+        self.static_src.grid(column=1, row=row, sticky="w", padx=6); row += 1
+
         # -------- 820 Transmitter (linear) --------
         tx = ttk.LabelFrame(frm, text="820 Transmitter (linear)")
         tx.grid(column=0, row=row, columnspan=3, sticky="ew", pady=(4, 8))
@@ -312,6 +326,15 @@ class App(tk.Tk):
 
         # Season + 820 transmitter parameters
         cfg.season = (self.season.get().strip() or "summer")
+        # Static source mode for density at traverse plane
+        sel = (self.static_src.get() or "").split()[0]
+        # maps to: ring_gauge | wall_gauge | wall_abs | baro_only
+        cfg.static_source_mode = {
+            "probe_ring_gauge": "ring_gauge",
+            "wall_tap_gauge":   "wall_gauge",
+            "wall_tap_absolute":"wall_abs",
+            "barometric_only":  "baro_only",
+        }.get(sel, "ring_gauge")
         # Allow the 820 override even if site preset is disabled: create a temp defaults dict
         if not cfg.enable_site:
             cfg.site = SitePreset(name="__GUI__", defaults={})
