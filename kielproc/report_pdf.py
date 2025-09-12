@@ -436,25 +436,30 @@ def _page_data_quality(outdir: Path) -> plt.Figure:
 # ---------- NEW: Operating band & recommendations table + verdict ----------
 def _page_band_table_and_verdict(outdir: Path, summary_path: Path) -> plt.Figure:
     s = json.loads(Path(summary_path).read_text())
+    meta = _load_json(Path(outdir) / "transmitter_lookup_meta.json")
     K = float(s.get("K") or s.get("K_uic") or 0.0)
     m = s.get("m_820"); c = s.get("c_820")
-    comb = Path(outdir) / "_integrated" / "transmitter_lookup_combined.csv"
-    if not comb.exists():
-        comb = Path(outdir) / "transmitter_lookup_combined.csv"
-    data = Path(outdir) / "_integrated" / "transmitter_lookup_data.csv"
-    if not data.exists():
-        data = Path(outdir) / "transmitter_lookup_data.csv"
-    if comb.exists() and "data_DP_mbar" in pd.read_csv(comb, nrows=1).columns:
-        df = pd.read_csv(comb)
-        dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
-        lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
-    elif data.exists() and "data_DP_mbar" in pd.read_csv(data, nrows=1).columns:
-        df = pd.read_csv(data)
-        dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
-        lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
-    else:
-        lo, hi = 2.0, 6.0
-    lo = max(lo, 1e-6); hi = max(hi, lo+1e-6); mid = 0.5*(lo+hi)
+    # operating band: prefer stored, else compute from overlay, else default
+    ob = meta.get("operating_band_mbar") or s.get("operating_band_mbar") or {}
+    lo = ob.get("p5_mbar"); hi = ob.get("p95_mbar")
+    if not (isinstance(lo, (int, float)) and isinstance(hi, (int, float))):
+        comb = Path(outdir) / "_integrated" / "transmitter_lookup_combined.csv"
+        if not comb.exists():
+            comb = Path(outdir) / "transmitter_lookup_combined.csv"
+        data = Path(outdir) / "_integrated" / "transmitter_lookup_data.csv"
+        if not data.exists():
+            data = Path(outdir) / "transmitter_lookup_data.csv"
+        if comb.exists() and "data_DP_mbar" in pd.read_csv(comb, nrows=1).columns:
+            df = pd.read_csv(comb)
+            dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
+            lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
+        elif data.exists() and "data_DP_mbar" in pd.read_csv(data, nrows=1).columns:
+            df = pd.read_csv(data)
+            dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
+            lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
+        else:
+            lo, hi = 2.0, 6.0
+    lo = max(1e-6, lo); hi = max(lo + 1e-6, hi); mid = 0.5*(lo+hi)
     def f(dp):
         return K*np.sqrt(np.clip(dp,0,None))
     def fprime(dp):
@@ -496,7 +501,7 @@ def _page_band_table_and_verdict(outdir: Path, summary_path: Path) -> plt.Figure
     L.append(
         f"  Thresholds: mean|e|<= {thr_mean:.3f} t/h, worst|e|<= {thr_worst:.3f} t/h  ->  Verdict: {'PASS' if verdict_ok else 'FAIL'}"
     )
-    L.append("  Configured:  m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
+    L.append("  Configured 820:  m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
         float(m or 0.0), float(c or 0.0), cur_mean, cur_worst))
     L.append("  Tangent:  m={:.4f}  c={:.4f}    mean|e|={:.3f}  worst|e|={:.3f}".format(
         m_tan, c_tan, tan_mean, tan_worst))
@@ -512,24 +517,30 @@ def _page_band_table_and_verdict(outdir: Path, summary_path: Path) -> plt.Figure
 # ---------- NEW: Before/after error bars ----------
 def _fig_error_bars(outdir: Path, summary_path: Path) -> plt.Figure:
     s = json.loads(Path(summary_path).read_text())
+    meta = _load_json(Path(outdir) / "transmitter_lookup_meta.json")
     K = float(s.get("K") or s.get("K_uic") or 0.0)
     m = s.get("m_820"); c = s.get("c_820")
-    comb = Path(outdir) / "_integrated" / "transmitter_lookup_combined.csv"
-    if not comb.exists():
-        comb = Path(outdir) / "transmitter_lookup_combined.csv"
-    data = Path(outdir) / "_integrated" / "transmitter_lookup_data.csv"
-    if not data.exists():
-        data = Path(outdir) / "transmitter_lookup_data.csv"
-    if comb.exists() and "data_DP_mbar" in pd.read_csv(comb, nrows=1).columns:
-        df = pd.read_csv(comb)
-        dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
-        lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
-    elif data.exists() and "data_DP_mbar" in pd.read_csv(data, nrows=1).columns:
-        df = pd.read_csv(data)
-        dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
-        lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
-    else:
-        lo, hi = 2.0, 6.0
+    # operating band: prefer stored, else compute from overlay, else default
+    ob = meta.get("operating_band_mbar") or s.get("operating_band_mbar") or {}
+    lo = ob.get("p5_mbar"); hi = ob.get("p95_mbar")
+    if not (isinstance(lo, (int, float)) and isinstance(hi, (int, float))):
+        comb = Path(outdir) / "_integrated" / "transmitter_lookup_combined.csv"
+        if not comb.exists():
+            comb = Path(outdir) / "transmitter_lookup_combined.csv"
+        data = Path(outdir) / "_integrated" / "transmitter_lookup_data.csv"
+        if not data.exists():
+            data = Path(outdir) / "transmitter_lookup_data.csv"
+        if comb.exists() and "data_DP_mbar" in pd.read_csv(comb, nrows=1).columns:
+            df = pd.read_csv(comb)
+            dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
+            lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
+        elif data.exists() and "data_DP_mbar" in pd.read_csv(data, nrows=1).columns:
+            df = pd.read_csv(data)
+            dps = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna()
+            lo = float(np.percentile(dps, 5.0)); hi = float(np.percentile(dps, 95.0))
+        else:
+            lo, hi = 2.0, 6.0
+    lo = max(1e-6, lo); hi = max(lo + 1e-6, hi)
     gx = np.linspace(lo, hi, 1000); yx = K*np.sqrt(gx)
     X = np.c_[gx, np.ones_like(gx)]; m_l2, c_l2 = np.linalg.lstsq(X, yx, rcond=None)[0]
     m_min, m_max = K/(2.0*np.sqrt(hi)), K/(2.0*np.sqrt(lo))
@@ -550,7 +561,7 @@ def _fig_error_bars(outdir: Path, summary_path: Path) -> plt.Figure:
     cur = stats(float(m or 0.0), float(c or 0.0))
     l2  = stats(float(m_l2), float(c_l2))
     linf= stats(float(best["m"]), float(best["c"]))
-    labels = ["Configured", "L2", "L_inf (Proposed)"]
+    labels = ["Configured 820", "L2", "L_inf (Proposed)"]
     means  = [cur[0], l2[0], linf[0]]
     worsts = [cur[1], l2[1], linf[1]]
     fig = plt.figure(figsize=(11.69, 8.27)); ax = fig.add_subplot(111)
