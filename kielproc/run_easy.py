@@ -24,6 +24,7 @@ from .tools.legacy_overlay import (
 )
 from .tools.venturi_builder import build_venturi_result
 from .tools.recalc import recompute_duct_result_with_rho
+from .profile_xi import aggregate_by_xi
 
 R_AIR = 287.05  # J/(kg*K)
 
@@ -346,6 +347,52 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     else:
         sp = {}
 
+    # --- If ξ and Aj exist, build robust Aj-weighted qs per port (z-gated where present) ---
+    profile_xi_meta = None
+    try:
+        per_port_path = outdir / "per_port.csv"
+        per_port = pd.read_csv(per_port_path)
+        per_sample = None
+        candidates = [
+            outdir / "normalized_timeseries.csv",
+            outdir / "per_sample.csv",
+            outdir / "staging_legacy.csv",
+        ]
+        for p in candidates:
+            if p.exists():
+                try:
+                    per_sample = pd.read_csv(p)
+                    break
+                except Exception:
+                    per_sample = None
+        if per_sample is not None and len(per_sample) >= 50:
+            qmap = {}
+            for idx, row in per_port.reset_index().itertuples():
+                pnum = int(getattr(row, "Port", idx + 1)) if "Port" in per_port.columns else (idx + 1)
+                for c in (f"q_s_P{pnum}_Pa", f"VP_P{pnum}_Pa", f"q_s_p{pnum}_pa", f"VP_p{pnum}_pa"):
+                    if c in per_sample.columns:
+                        qmap[pnum] = c
+                        break
+            zmap = {}
+            for pnum in qmap.keys():
+                for zc in (f"z_P{pnum}_cm", f"height_P{pnum}_cm", f"pos_P{pnum}_cm"):
+                    if zc in per_sample.columns:
+                        zmap[pnum] = zc
+                        break
+            qs_mean_by_port, profile_xi_meta = aggregate_by_xi(per_sample, qmap, z_cols_by_port=zmap)
+            if "Port" in per_port.columns:
+                for i in range(len(per_port)):
+                    pnum = int(per_port["Port"].iloc[i])
+                    if pnum in qs_mean_by_port and np.isfinite(qs_mean_by_port[pnum]):
+                        per_port.at[i, "q_s_pa_mean"] = qs_mean_by_port[pnum]
+            else:
+                for i, pnum in enumerate(sorted(qs_mean_by_port.keys())):
+                    if np.isfinite(qs_mean_by_port[pnum]):
+                        per_port.at[i, "q_s_pa_mean"] = qs_mean_by_port[pnum]
+            per_port.to_csv(per_port_path, index=False)
+    except Exception:
+        profile_xi_meta = None
+
     # ---------------------- Flow lookup (always) -----------------------------
     # Fail loud if we expected an overlay but ended up with none
     if overlay_expected and not (sp_csv and Path(sp_csv).exists()):
@@ -465,6 +512,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "setpoints": sp,
         "venturi_result_json": (str(venturi_path) if venturi_path else None),
     }
+    if profile_xi_meta is not None:
+        summary.setdefault("profile_xi", {})["meta"] = profile_xi_meta
     # capture flow lookup meta paths for audit
     summary["flow_lookup"] = tx_meta
     # ALSO expose transmitter details at top-level for legacy report readers
