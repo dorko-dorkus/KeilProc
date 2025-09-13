@@ -79,6 +79,8 @@ class RunConfig:
     static_source_mode: str = "ring_gauge"  # "ring_gauge" | "wall_gauge" | "wall_abs" | "baro_only"
     # Optional site defaults: calib_820_summer / calib_820_winter
     lookup_dp_max_mbar: float = 10.0
+    # Optional correction factor plane→throat (loss/recovery). Default 1.0
+    plane_to_throat_coeff: float = 1.0
 
 
 def _resolve_site(cfg: RunConfig) -> SitePreset:
@@ -517,7 +519,61 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     v_bar_final = (duct_obj or {}).get("v_bar_m_s")
     Q_final = (duct_obj or {}).get("Q_m3_s")
     m_dot_final = (duct_obj or {}).get("m_dot_kg_s")
-    q_s_mean = (duct_obj or {}).get("q_s_pa_mean")
+    q_s_mean = (duct_obj or {}).get("q_s_pa")
+
+    # --- Geometry mapping to throat (global constants) ---
+    q_t_mean = (duct_obj or {}).get("q_t_pa")
+    delta_p_vent = (duct_obj or {}).get("delta_p_vent_est_pa")
+    if q_s_mean is None and per_port is not None:
+        try:
+            q_s_mean = float(
+                np.nanmean(pd.to_numeric(per_port["q_s_pa_mean"], errors="coerce"))
+            )
+        except Exception:
+            q_s_mean = None
+    if (q_t_mean is None) and (q_s_mean is not None) and (r is not None) and np.isfinite(r):
+        q_t_mean = float((r ** 2) * q_s_mean)
+    if (delta_p_vent is None) and (q_t_mean is not None) and (beta is not None) and np.isfinite(beta):
+        delta_p_vent = float((1.0 - (beta ** 4)) * q_t_mean)  # Pa (geometry-only)
+    if duct_obj is None:
+        duct_obj = {}
+    if q_s_mean is not None:
+        duct_obj["q_s_pa"] = float(q_s_mean)
+    if q_t_mean is not None:
+        duct_obj["q_t_pa"] = float(q_t_mean)
+    if delta_p_vent is not None:
+        duct_obj["delta_p_vent_est_pa"] = float(delta_p_vent)
+    duct_path.write_text(json.dumps(duct_obj, indent=2))
+
+    # Optional correction factor plane→throat (loss/recovery). Default 1.0
+    C_f = float(getattr(cfg, "plane_to_throat_coeff", 1.0))
+
+    # --- Reconcile predicted venturi DP vs overlay data (if present) ---
+    reconcile: Dict[str, Any] = {}
+    try:
+        data_csv = outdir / "transmitter_lookup_data.csv"
+        if data_csv.exists() and (q_t_mean is not None) and (beta is not None):
+            df_overlay = pd.read_csv(data_csv)
+            if "data_DP_mbar" in df_overlay.columns:
+                dp = pd.to_numeric(df_overlay["data_DP_mbar"], errors="coerce").dropna().to_numpy()
+                if dp.size:
+                    p5, p50, p95 = np.percentile(dp, [5, 50, 95])
+                    # Predicted Piccolo DP (mbar) from traverse plane:
+                    # Δp_pred = C_f * (1 - β^4) * q_t_mean  [Pa]  → mbar
+                    dp_pred_mbar = (C_f * (1.0 - beta**4) * q_t_mean) / 100.0
+                    reconcile = {
+                        "dp_overlay_p5_mbar": float(p5),
+                        "dp_overlay_p50_mbar": float(p50),
+                        "dp_overlay_p95_mbar": float(p95),
+                        "dp_pred_mbar": float(dp_pred_mbar),
+                        "dp_error_mbar": float(dp_pred_mbar - p50),
+                        "dp_error_pct_vs_p50": float(100.0 * (dp_pred_mbar - p50) / p50)
+                        if p50
+                        else None,
+                        "C_f": C_f,
+                    }
+    except Exception:
+        pass
 
     # Static-source labeling: derive from per_port "p_abs_source" if we can
     static_mode = mode
@@ -543,9 +599,12 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "static_source_mode": static_mode,
         "p_plane_static_pa_mean": p_plane if p_plane is not None else baro_pa,
         "q_s_pa_mean": q_s_mean,
+        "q_t_pa_mean": q_t_mean,
+        "delta_p_vent_est_pa": delta_p_vent,
         "v_bar_m_s": v_bar_final,
         "Q_m3_s": Q_final,
         "m_dot_kg_s": m_dot_final,
+        "reconcile": reconcile,
         # audit / repro metadata
         "inputs_manifest": input_manifest,
         "acceptance": acceptance,
