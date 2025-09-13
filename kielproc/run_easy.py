@@ -337,6 +337,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
 
     # --- If ξ and Aj exist, build robust Aj-weighted qs per port (z-gated where present) ---
     profile_xi_meta = None
+    qc_info: Dict[str, Any] = {}
     try:
         per_port_path = outdir / "per_port.csv"
         per_port = pd.read_csv(per_port_path)
@@ -378,8 +379,12 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                     if np.isfinite(qs_mean_by_port[pnum]):
                         per_port.at[i, "q_s_pa_mean"] = qs_mean_by_port[pnum]
             per_port.to_csv(per_port_path, index=False)
+        else:
+            profile_xi_meta = {}
+            qc_info["note"] = "Timeseries not found \u2192 QC & \u03be aggregation skipped."
     except Exception:
-        profile_xi_meta = None
+        profile_xi_meta = {}
+        qc_info["note"] = "Timeseries not found \u2192 QC & \u03be aggregation skipped."
 
     # ---------------------- Flow lookup (always) -----------------------------
     # Fail loud if we expected an overlay but ended up with none
@@ -542,8 +547,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         },
         "setpoints": sp,
     }
-    if profile_xi_meta is not None:
-        summary.setdefault("profile_xi", {})["meta"] = profile_xi_meta
+    summary.setdefault("profile_xi", {})["meta"] = profile_xi_meta or {}
+    summary["qc"] = qc_info
     # capture flow lookup meta paths for audit
     summary["flow_lookup"] = tx_meta
     # ALSO expose transmitter details at top-level for legacy report readers
