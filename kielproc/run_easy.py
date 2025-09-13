@@ -479,6 +479,45 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     ).encode("utf-8")
     cfg_hash = hashlib.sha256(cfg_hash_src).hexdigest()[:12]
 
+    # Load duct_result to make summary authoritative and consistent
+    duct_path = outdir / "duct_result.json"
+    duct_obj: Dict[str, Any] | None = None
+    if duct_path.exists():
+        try:
+            duct_obj = json.loads(duct_path.read_text())
+        except Exception:
+            duct_obj = None
+
+    # Prefer plane static mean from per_port (p_s_pa) if present
+    p_plane: float | None = None
+    try:
+        if "p_s_pa" in per_port.columns:
+            p_plane = float(np.nanmean(pd.to_numeric(per_port["p_s_pa"], errors="coerce")))
+    except Exception:
+        p_plane = None
+    if p_plane is None and duct_obj and isinstance(duct_obj.get("p_s_pa_mean"), (int, float)):
+        try:
+            p_plane = float(duct_obj.get("p_s_pa_mean"))
+        except Exception:
+            p_plane = None
+
+    # Adopt rho/Q/v/m_dot from duct_result when available
+    rho_final = (duct_obj or {}).get("rho_kg_m3", rho_used)
+    rho_src_final = (duct_obj or {}).get("rho_source", rho_src)
+    v_bar_final = (duct_obj or {}).get("v_bar_m_s")
+    Q_final = (duct_obj or {}).get("Q_m3_s")
+    m_dot_final = (duct_obj or {}).get("m_dot_kg_s")
+    q_s_mean = (duct_obj or {}).get("q_s_pa_mean")
+
+    # Static-source labeling: derive from per_port "p_abs_source" if we can
+    static_mode = mode
+    try:
+        srcs = per_port["p_abs_source"].dropna().astype(str).unique().tolist()
+        if srcs:
+            static_mode = srcs[0]
+    except Exception:
+        pass
+
     summary = {
         "baro_pa": baro_pa,
         "baro_source": baro_source,
@@ -489,10 +528,14 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "thermo_source": thermo_source,
         "A1_m2": A1,
         "T_K": T_K,
-        "rho_kg_m3": rho_used,
-        "rho_source": rho_src,
-        "static_source_mode": mode,
-        "p_plane_static_pa_mean": p_plane_static_pa,
+        "rho_kg_m3": rho_final,
+        "rho_source": rho_src_final,
+        "static_source_mode": static_mode,
+        "p_plane_static_pa_mean": p_plane if p_plane is not None else baro_pa,
+        "q_s_pa_mean": q_s_mean,
+        "v_bar_m_s": v_bar_final,
+        "Q_m3_s": Q_final,
+        "m_dot_kg_s": m_dot_final,
         # audit / repro metadata
         "inputs_manifest": input_manifest,
         "acceptance": acceptance,
