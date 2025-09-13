@@ -22,7 +22,7 @@ from .tools.legacy_overlay import (
     extract_piccolo_range_and_avg_current,
     extract_process_temperature_from_workbook,
 )
-from .tools.venturi_builder import build_venturi_result
+from .tools.venturi_builder import build_venturi_curve
 from .tools.recalc import recompute_duct_result_with_rho
 from .profile_xi import aggregate_by_xi
 
@@ -248,9 +248,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         except Exception:
             piccolo_overlay_csv = None
     
-    # --- Use plane static for density; build Venturi curve; recompute duct totals coherently ---
-    venturi = {}
-    venturi_path: Optional[Path] = None
+    # --- Use plane static for density; recompute duct totals coherently ---
     rho_used: Optional[float] = None
     rho_src: str = "unknown"
     # ---- Plane static selection & reconstruction ----
@@ -310,20 +308,10 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 logger.error(msg)
                 raise SystemExit(msg)
             try:
-                venturi_path = build_venturi_result(
-                    outdir,
-                    beta=beta,
-                    area_As_m2=As,
-                    baro_pa=p_plane_static_pa,
-                    T_K=T_K,
-                    m_dot_hint_kg_s=(res.get("duct", {}) or {}).get("m_dot_kg_s"),
-                )
-                if venturi_path:
-                    venturi = json.loads(Path(venturi_path).read_text())
                 r_ar = (1.0 / (beta * beta)) if beta else None
                 recompute_duct_result_with_rho(outdir, rho_used, r_area_ratio=r_ar)
             except Exception:  # pragma: no cover - defensive
-                logger.error("FATAL: Venturi curve build/recompute failed", exc_info=True)
+                logger.error("FATAL: density recompute failed", exc_info=True)
                 raise
     # Optional transmitter setpoints
     sp_csv = cfg.setpoints_csv or (site.defaults.get("setpoints_csv") if site and site.defaults else None)
@@ -553,7 +541,6 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
             "csv": (str(piccolo_overlay_csv) if piccolo_overlay_csv else None),
         },
         "setpoints": sp,
-        "venturi_result_json": (str(venturi_path) if venturi_path else None),
     }
     if profile_xi_meta is not None:
         summary.setdefault("profile_xi", {})["meta"] = profile_xi_meta
@@ -569,6 +556,20 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     # Also expose K for any legacy readers
     if cal.get("K_uic") is not None:
         summary["K_uic"] = cal["K_uic"]
+
+    # Venturi curve using final density (if geometry present)
+    venturi_json_path = None
+    if (beta is not None) and (r is not None):
+        venturi_json_path = outdir / "venturi_result.json"
+        vent = build_venturi_curve(beta=beta, r=r, A1=A1, rho=rho_final, m_dot_hint_kg_s=m_dot_final)
+        if vent:
+            venturi_json_path.write_text(json.dumps(vent, indent=2))
+            summary["venturi_result_json"] = str(venturi_json_path)
+        else:
+            summary["venturi_result_json"] = None
+    else:
+        summary["venturi_result_json"] = None
+        summary["venturi_note"] = "Skipped: require both beta and r; set in GUI → Geometry."
     (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
 
     # ---------------------- Single PDF report ------------------------
