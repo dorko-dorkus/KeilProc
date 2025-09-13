@@ -210,6 +210,7 @@ def _fig_cover(outdir: Path, summary_path: Path) -> plt.Figure:
         flow_meta = json.loads(meta_path.read_text())
     except Exception:
         pass
+    norm_meta = _load_json(Path(outdir) / "normalize_meta.json")
 
     fig = plt.figure(figsize=(8.27, 11.69))  # A4 portrait
     ax = fig.add_axes([0,0,1,1]); ax.axis("off")
@@ -225,6 +226,13 @@ def _fig_cover(outdir: Path, summary_path: Path) -> plt.Figure:
         lines.append(f"Prepared input: {s.get('prepared_input_dir','')}")
         if s.get("beta") is not None or s.get("r") is not None:
             lines.append(f"β: {s.get('beta')}    r: {s.get('r')}")
+    if norm_meta:
+        lines.append(f"Barometric pressure used: {norm_meta.get('baro_pa_used','n/a')} Pa")
+        srcs = norm_meta.get("p_abs_source", {})
+        if srcs:
+            lines.append("Static abs source: " + ", ".join(f"{k}:{v}" for k,v in srcs.items()))
+        if norm_meta.get("replicate_layout"):
+            lines.append(f"Ingest: {norm_meta['replicate_layout']}")
     if flow_meta:
         cal = flow_meta.get("calibration", {})
         lines.append("")
