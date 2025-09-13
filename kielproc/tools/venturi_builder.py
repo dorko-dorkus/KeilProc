@@ -49,3 +49,50 @@ def build_venturi_result(outdir: Path, *,
     p = outdir / "venturi_result.json"
     p.write_text(json.dumps(out, indent=2))
     return p
+
+
+def build_venturi_curve(*, beta: float | None, r: float | None, A1: float | None,
+                        rho: float | None, m_dot_hint_kg_s: float | None = None) -> dict | None:
+    """Return venturi curve data for the given geometry and density.
+
+    Parameters
+    ----------
+    beta:
+        Venturi diameter ratio :math:`\beta = d_2 / d_1`.
+    r:
+        Area ratio :math:`r = A_s / A_t` (verification plane over throat).
+    A1:
+        Verification plane area :math:`A_s` in square metres.
+    rho:
+        Fluid density in kg/m³.
+    m_dot_hint_kg_s:
+        Optional mass flow hint to set the sweep range.
+
+    Returns
+    -------
+    dict | None
+        Dictionary with ``flow_kg_s``, ``dp_pa``, ``beta``, ``A1_m2``, ``At_m2``,
+        and ``rho_kg_m3`` or ``None`` if inputs are invalid.
+    """
+
+    beta = _ensure_float(beta)
+    r = _ensure_float(r)
+    A1 = _ensure_float(A1)
+    rho = _ensure_float(rho)
+    if None in (beta, r, A1, rho) or beta <= 0 or r <= 0 or A1 <= 0 or rho <= 0:
+        return None
+    At = A1 / r
+    if m_dot_hint_kg_s and m_dot_hint_kg_s > 0:
+        m0 = float(m_dot_hint_kg_s)
+        flow_kg_s = np.linspace(max(0.1, 0.25 * m0), 2.0 * m0, 200)
+    else:
+        flow_kg_s = np.linspace(0.1, 100.0 / 3.6, 250)
+    dp_pa = (1.0 - beta**4) * (flow_kg_s**2) / (2.0 * rho * (At**2))
+    return {
+        "flow_kg_s": flow_kg_s.tolist(),
+        "dp_pa": dp_pa.tolist(),
+        "beta": beta,
+        "A1_m2": A1,
+        "At_m2": At,
+        "rho_kg_m3": rho,
+    }
