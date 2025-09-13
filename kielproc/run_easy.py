@@ -207,7 +207,12 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
             _therm = {"status": "error", "error": str(_e)}
         if _therm.get("status") == "ok" and _therm.get("T_K", 0) > 0:
             wb_T_K = float(_therm["T_K"])
-            thermo_meta["workbook_hint"] = {"T_K": wb_T_K, "cell": _therm.get("cell")}
+            th_hint = {"T_K": wb_T_K, "cell": _therm.get("cell"), "source": "workbook"}
+            if _therm.get("value") is not None:
+                th_hint["value"] = _therm.get("value")
+            if _therm.get("unit"):
+                th_hint["unit"] = _therm.get("unit")
+            thermo_meta["workbook_hint"] = th_hint
         else:
             wb_T_K = None
             thermo_meta["workbook_hint"] = {"detail": _therm}

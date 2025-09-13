@@ -85,6 +85,7 @@ def test_run_all_accepts_workbook(tmp_path):
     ws = wb["Data"]
     ws["H15"] = "kPa"
     ws["I15"] = 101.6
+    ws.append(["Primary Air Temp", "C", 150.0])
     wb.save(wb_path)
 
     cfg = RunConfig(
@@ -119,3 +120,7 @@ def test_run_all_accepts_workbook(tmp_path):
     assert summary["baro_pa"] == 101_600.0
     assert summary["baro_source"]["source"] == "workbook"
     assert summary["K_uic"] == 33.5
+    therm = summary["thermo_source"].get("workbook_hint", {})
+    assert therm["source"] == "workbook"
+    assert therm["value"] == 150.0
+    assert therm["unit"] == "C"

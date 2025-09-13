@@ -246,9 +246,9 @@ def extract_temperature_from_workbook(xlsx_path: Path) -> Dict[str, Any]:
     Returns
     -------
     dict
-        ``{"status": "ok", "T_K": float, "cell": "Data!I.."}`` when a value
-        is found, ``{"status": "absent"}`` when the region lacks such a row,
-        or ``{"status": "error", "error": str}`` on exceptions.
+        ``{"status": "ok", "T_K": float, "cell": "Data!I..", "value": float, "unit": str}``
+        when a value is found, ``{"status": "absent"}`` when the region lacks
+        such a row, or ``{"status": "error", "error": str}`` on exceptions.
     """
 
     try:
@@ -264,10 +264,16 @@ def extract_temperature_from_workbook(xlsx_path: Path) -> Dict[str, Any]:
             unit_s = str(unit).strip().lower()
             if unit_s in ("c", "°c", "degc", "deg c"):
                 try:
-                    T_K = float(val) + 273.15
+                    v = float(val)
                 except Exception:
                     continue
-                return {"status": "ok", "T_K": T_K, "cell": f"Data!I{r}"}
+                return {
+                    "status": "ok",
+                    "T_K": v + 273.15,
+                    "cell": f"Data!I{r}",
+                    "value": v,
+                    "unit": "C",
+                }
         return {"status": "absent"}
     except Exception as e:
         return {"status": "error", "error": str(e)}
@@ -289,9 +295,9 @@ def extract_process_temperature_from_workbook(xlsx_path: Path) -> dict:
     Returns
     -------
     dict
-        ``{"status":"ok","T_K": float, "cell": "Data!I.."}`` when a value
-        is found, ``{"status":"absent"}`` when no suitable row is located,
-        or ``{"status":"error", "error": str}`` on failure.
+        ``{"status":"ok","T_K": float, "cell": "Data!I..", "value": float, "unit": str}``
+        when a value is found, ``{"status":"absent"}`` when no suitable row is
+        located, or ``{"status":"error", "error": str}`` on failure.
     """
 
     try:
@@ -342,6 +348,8 @@ def extract_process_temperature_from_workbook(xlsx_path: Path) -> dict:
             "status": "ok",
             "T_K": best["T_C"] + 273.15,
             "cell": best["cell"],
+            "value": best["T_C"],
+            "unit": "C",
         }
     except Exception as e:  # pragma: no cover - protective
         return {"status": "error", "error": str(e)}
