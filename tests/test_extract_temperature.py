@@ -21,6 +21,8 @@ def test_extract_temperature_from_workbook(tmp_path):
     assert res["status"] == "ok"
     assert abs(res["T_K"] - (20.0 + 273.15)) < 1e-6
     assert res["cell"] == "Data!I15"
+    assert res["value"] == 20.0
+    assert res["unit"] == "C"
 
 
 def test_extract_process_temperature_from_workbook(tmp_path):
@@ -36,4 +38,6 @@ def test_extract_process_temperature_from_workbook(tmp_path):
     assert res["status"] == "ok"
     assert abs(res["T_K"] - (150.0 + 273.15)) < 1e-6
     assert res["cell"] == "Data!C2"
+    assert res["value"] == 150.0
+    assert res["unit"] == "C"
 
