@@ -2,6 +2,7 @@ import os
 import threading
 import traceback
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
 
@@ -15,8 +16,25 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("880x640")
+        self.geometry("980x700")
+        self.minsize(900, 600)
+        self._apply_theme()
         self._build()
+
+    def _apply_theme(self) -> None:
+        """Readable, modern defaults without new deps."""
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        base = tkfont.nametofont("TkDefaultFont")
+        base.configure(size=10)
+        self.option_add("*Font", base)
+        # Slightly bolder section titles; comfortable hit targets
+        style.configure("TLabelframe.Label", font=(base.actual("family"), 10, "bold"))
+        style.configure("TButton", padding=(8, 4))
+        style.configure("TEntry", padding=4)
 
     # ------------------------------------------------------------------ UI
     def _build(self):
@@ -222,14 +240,17 @@ class App(tk.Tk):
         self.sp_sign = ttk.Entry(frm, width=10); self.sp_sign.insert(0, "+1")
         self.sp_sign.grid(column=1, row=row, sticky="w", padx=6); row += 1
 
-        # Run button and status ---------------------------------------
+        # Run button, status, and progress ----------------------------
         self.run_btn = ttk.Button(frm, text="Run", command=self._on_run)
         self.run_btn.grid(column=0, row=row, pady=8, sticky="w")
         self.status = ttk.Label(frm, text="Idle")
         self.status.grid(column=1, row=row, sticky="w")
+        self.progress = ttk.Progressbar(frm, mode="indeterminate", length=160)
+        self.progress.grid(column=2, row=row, sticky="e")
         row += 1
 
-        self.log = ScrolledText(frm, height=18)
+        # Log: fixed-width, smaller size for density
+        self.log = ScrolledText(frm, height=18, font=("TkFixedFont", 9))
         self.log.grid(column=0, row=row, columnspan=3, sticky="nsew")
         frm.columnconfigure(1, weight=1)
         frm.rowconfigure(row, weight=1)
@@ -378,6 +399,8 @@ class App(tk.Tk):
 
         self.run_btn.configure(state="disabled")
         self.status.configure(text="Running…")
+        if hasattr(self, "progress"):
+            self.progress.start(12)
         self.log.delete("1.0", tk.END)
         threading.Thread(target=self._run_thread, args=(cfg,), daemon=True).start()
 
@@ -398,6 +421,8 @@ class App(tk.Tk):
             self._append_log(tb)
             messagebox.showerror(APP_TITLE, "Run failed. See log for details.")
         finally:
+            if hasattr(self, "progress"):
+                self.progress.stop()
             self.run_btn.configure(state="normal")
 
 
