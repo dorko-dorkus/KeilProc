@@ -422,26 +422,22 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
         L.append(f"Recommended DP band: {rb_lo:.5g}–{rb_hi:.5g} mbar{cov_txt}")
 
     # Temperature & density (if present)
-    T_K_val = s.get("T_K")
-    rho = s.get("rho_kg_m3", None)
-    rho_src = s.get("rho_source", None)
+    rho = s.get("rho_kg_m3", None); rho_src = s.get("rho_source", None)
     if rho is None:
         try:
             duct = json.load(open(Path(outdir) / "duct_result.json"))
-            rho = duct.get("rho_kg_m3", None)
-            rho_src = duct.get("rho_source", rho_src)
+            rho = duct.get("rho_kg_m3", None); rho_src = duct.get("rho_source", rho_src)
         except Exception:
             pass
-    if isinstance(T_K_val, (int, float)):
-        L.append(f"Process temperature: {T_K_val:.2f} K ({T_K_val-273.15:.1f} C)")
-    L.append(
-        "Density ρ = {} kg·m⁻³  (source: {}; p_s_used = {} Pa; mode = {})".format(
-            f"{rho:.6g}" if isinstance(rho, (int, float)) else "n/a",
-            rho_src if rho_src else "n/a",
-            s.get("p_plane_static_pa_mean", "n/a"),
-            s.get("static_source_mode", "n/a"),
-        )
-    )
+    tmeta = (s.get("thermo_source") or {}).get("thermo_choice", {})
+    TK = s.get("T_K", None)
+    t_src = tmeta.get("source", "unknown")
+    fallback = bool(tmeta.get("fallback", False))
+    L.append("Temperature: {} K ({})".format(f"{TK:.2f}" if isinstance(TK,(int,float)) else "n/a", t_src))
+    if fallback or (isinstance(TK,(int,float)) and TK < 320.0):
+        L.append("  Note: temperature selection fallback or near-ambient; verify thermo channel.")
+    L.append("Density: {} kg/m³ ({})".format(f"{rho:.6g}" if isinstance(rho,(int,float)) else "n/a",
+                                             rho_src if rho_src else "n/a"))
     if isinstance(rho, (int, float)) and (rho < 0.2 or rho > 2.0):
         L.append("WARNING: implausible density — check baro/T units.")
     if n > 0:
