@@ -50,6 +50,54 @@ def _overlay_dp_series(comb: Optional[pd.DataFrame], data: Optional[pd.DataFrame
     return pd.Series(dtype=float)
 
 
+def _recommended_band(outdir: Path, summary: dict) -> tuple[float | None, float | None, float | None]:
+    """Return (lo, hi, coverage_frac) where lo/hi are mbar.
+
+    Precedence:
+      1) summary.json: ["transmitter"]["recommended_band_dp_mbar"] = [lo, hi]
+      2) transmitter_lookup_data.csv DP percentiles P5–P95
+    coverage_frac is fraction of overlay samples within [lo,hi] if data present.
+    """
+
+    lo = hi = cov = None
+    try:
+        band = (summary or {}).get("transmitter", {}).get("recommended_band_dp_mbar", None)
+        if isinstance(band, (list, tuple)) and len(band) == 2:
+            lo, hi = float(band[0]), float(band[1])
+    except Exception:
+        pass
+
+    if lo is None or hi is None:
+        data_csv = Path(outdir) / "transmitter_lookup_data.csv"
+        if data_csv.exists():
+            df = pd.read_csv(data_csv)
+            if "data_DP_mbar" in df.columns and df["data_DP_mbar"].notna().any():
+                dp = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna().to_numpy()
+                if dp.size >= 20:
+                    lo = float(np.percentile(dp, 5))
+                    hi = float(np.percentile(dp, 95))
+                    cov = float(np.mean((dp >= lo) & (dp <= hi)))
+
+    if cov is None and (lo is not None and hi is not None):
+        try:
+            df = pd.read_csv(Path(outdir) / "transmitter_lookup_data.csv")
+            dp = pd.to_numeric(df["data_DP_mbar"], errors="coerce").dropna().to_numpy()
+            cov = float(np.mean((dp >= lo) & (dp <= hi))) if dp.size else None
+        except Exception:
+            cov = None
+
+    return lo, hi, cov
+
+
+def _shade_recommended_band(ax: plt.Axes, outdir: Path, summary: dict, label_prefix: str = "Recommended") -> None:
+    """Shade vertical DP band on current axes if available."""
+
+    lo, hi, _ = _recommended_band(outdir, summary)
+    if lo is None or hi is None or not np.isfinite([lo, hi]).all():
+        return
+    ax.axvspan(lo, hi, alpha=0.12, ec="none", zorder=0, label=f"{label_prefix} band {lo:.3g}–{hi:.3g} mbar")
+
+
 def _fig_text(title: str, lines: list[str]) -> plt.Figure:
     """
     Single-page text with auto-fit:
@@ -328,6 +376,10 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
         L.append(f"Operating band ({label}): {p5:.5g}–{p95:.5g} mbar (P5–P95)")
     else:
         L.append(f"Operating band ({label}): n/a (no overlay DP present)")
+    rb_lo, rb_hi, rb_cov = _recommended_band(outdir, s)
+    if rb_lo is not None and rb_hi is not None:
+        cov_txt = f" — coverage {rb_cov*100:.1f}%" if rb_cov is not None else ""
+        L.append(f"Recommended DP band: {rb_lo:.5g}–{rb_hi:.5g} mbar{cov_txt}")
 
     # Temperature & density (if present)
     T_K_val = s.get("T_K")
@@ -786,7 +838,11 @@ def _fig_flow_reference_with_overlay(outdir: Path) -> plt.Figure | None:
             ax.scatter(dd["data_DP_mbar"], dd["data_Flow_820_tph"], s=12, alpha=0.7, label="820 – data")
     ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
     ax.set_title("Flow lookup: reference (constant) with data overlay")
-    ax.grid(True, linestyle="--", alpha=0.4); ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.4)
+    _shade_recommended_band(ax, outdir, _load_json(Path(outdir) / "summary.json"), label_prefix="Recommended")
+    handles, labels = ax.get_legend_handles_labels()
+    if labels:
+        ax.legend(loc="best", frameon=True)
     return fig
 
 
@@ -823,6 +879,7 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
     # Title plus Piccolo current band if range is known
     title = f"Flow lookup — overlay zoom (n={len(dp)}, DP {dp_min:.3f}–{dp_max:.3f} mbar)"
     rng = I_lo = I_hi = None
+    s_all = {}
     try:
         s_all = _load_json(Path(outdir) / "summary.json")
         rng = (s_all.get("piccolo_info") or {}).get("range_mbar", None)
@@ -833,7 +890,11 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
     except Exception:
         pass
     ax.set_title(title)
-    ax.grid(True, linestyle="--", alpha=0.4); ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.4)
+    _shade_recommended_band(ax, outdir, s_all, label_prefix="Recommended")
+    handles, labels = ax.get_legend_handles_labels()
+    if labels:
+        ax.legend(loc="best", frameon=True)
     if I_lo is not None and I_hi is not None:
         fig.text(0.5, 0.03, f"Implied Piccolo I from overlay DP: {I_lo:.4f}–{I_hi:.4f} mA", ha="center", fontsize=10)
     return fig
