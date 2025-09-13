@@ -25,6 +25,7 @@ from .tools.legacy_overlay import (
 from .tools.venturi_builder import build_venturi_curve
 from .tools.recalc import recompute_duct_result_with_rho
 from .profile_xi import aggregate_by_xi
+from .temp_select import pick_duct_temperature_K
 
 R_AIR = 287.05  # J/(kg*K)
 
@@ -153,7 +154,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     logger.info("Run start: input=%s output=%s glob=%s", cfg.input_dir, cfg.output_dir, cfg.file_glob)
     site = _resolve_site(cfg)
     baro_source: Dict[str, Any] = {"source": "gui_or_default"}
-    thermo_source: Dict[str, Any] = {"source": "absent"}
+    thermo_meta: Dict[str, Any] = {}
+    wb_T_K: Optional[float] = None
     T_K: Optional[float] = None
     geom, r, beta, dims, As, At = _resolve_geometry(site)
     A1 = As
@@ -198,18 +200,17 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         else:
             baro_source = {"source": "gui_or_default", "detail": _baro}
 
-        # Process temperature from workbook (°C → K)
+        # Process temperature from workbook (°C → K) used as a hint
         try:
             _therm = extract_process_temperature_from_workbook(in_path)
         except Exception as _e:  # pragma: no cover - defensive
             _therm = {"status": "error", "error": str(_e)}
         if _therm.get("status") == "ok" and _therm.get("T_K", 0) > 0:
-            T_K = float(_therm["T_K"])
-            thermo_source = {"source": "workbook", "cell": _therm.get("cell")}
+            wb_T_K = float(_therm["T_K"])
+            thermo_meta["workbook_hint"] = {"T_K": wb_T_K, "cell": _therm.get("cell")}
         else:
-            # Fallback: no workbook temp — leave unset and let downstream decide
-            T_K = None
-            thermo_source = {"source": "absent", "detail": _therm}
+            wb_T_K = None
+            thermo_meta["workbook_hint"] = {"detail": _therm}
     else:
         raise FileNotFoundError(
             f"Input path must be a folder of CSVs or an .xlsx workbook: {in_path}"
@@ -247,7 +248,16 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 piccolo_overlay_csv = None
         except Exception:
             piccolo_overlay_csv = None
-    
+
+    # --- Robust duct temperature selection ---
+    t_pick = pick_duct_temperature_K(
+        per_port_df,
+        workbook_hint_value=wb_T_K,
+        workbook_hint_unit=("K" if wb_T_K is not None else None),
+    )
+    T_K = float(t_pick["T_K"])
+    thermo_meta["thermo_choice"] = t_pick
+
     # --- Use plane static for density; recompute duct totals coherently ---
     rho_used: Optional[float] = None
     rho_src: str = "unknown"
@@ -277,42 +287,44 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     else:
         p_plane_static_pa = float(baro_pa)
         p_static_source_note = "barometric_only (no static column)"
-    if (beta is not None) and (As is not None) and p_plane_static_pa:
-        # If workbook didn't supply temp, try duct result mean temp
-        if T_K is None:
-            duct = res.get("duct", {}) or {}
-            if isinstance(duct.get("temp_K_mean"), (int, float)):
-                T_K = float(duct.get("temp_K_mean"))
-                thermo_source = {"source": "duct_result", "key": "temp_K_mean"}
-            elif isinstance(duct.get("temp_C_mean"), (int, float)):
-                T_K = float(duct.get("temp_C_mean")) + 273.15
-                thermo_source = {"source": "duct_result", "key": "temp_C_mean"}
-        if T_K is None and per_port_df is not None:
-            try:
-                col = "T_C_mean"
-                if col in per_port_df.columns:
-                    T_K = float(per_port_df[col].mean()) + 273.15
-                    thermo_source = {"source": "per_port", "column": col}
-            except Exception:
-                pass
-        if T_K and T_K > 0:
-            rho_used = float(p_plane_static_pa) / (R_AIR * float(T_K))
-            rho_src = f"ideal_gas_TK @ {p_static_source_note}"
-            if not (0.2 <= rho_used <= 2.0):
-                msg = (
-                    f"FATAL: implausible density {rho_used:.6f} kg/m^3 "
-                    f"(P_use={p_plane_static_pa:.1f} Pa, T_K={T_K:.2f}). "
-                    f"Likely using GAUGE static as absolute. "
-                    f"Ensure p_s = baro + Static(gauge)."
-                )
-                logger.error(msg)
-                raise SystemExit(msg)
-            try:
-                r_ar = (1.0 / (beta * beta)) if beta else None
-                recompute_duct_result_with_rho(outdir, rho_used, r_area_ratio=r_ar)
-            except Exception:  # pragma: no cover - defensive
-                logger.error("FATAL: density recompute failed", exc_info=True)
-                raise
+
+    # Density convention (plane static vs baro) as configured
+    if getattr(cfg, "rho_convention", "plane_static") == "baro_T":
+        rho_used = baro_pa / (R_AIR * T_K)
+        rho_src = "ideal_gas_baro_T"
+    else:
+        rho_used = float(p_plane_static_pa if p_plane_static_pa is not None else baro_pa) / (R_AIR * T_K)
+        rho_src = f"ideal_gas_TK @ {p_static_source_note}"
+    if not (0.2 <= rho_used <= 2.0):
+        msg = (
+            f"FATAL: implausible density {rho_used:.6f} kg/m^3 "
+            f"(P_use={p_plane_static_pa:.1f} Pa, T_K={T_K:.2f}). "
+            f"Likely using GAUGE static as absolute. "
+            f"Ensure p_s = baro + Static(gauge)."
+        )
+        logger.error(msg)
+        raise SystemExit(msg)
+    try:
+        r_ar = (1.0 / (beta * beta)) if beta else None
+        recompute_duct_result_with_rho(outdir, rho_used, r_area_ratio=r_ar)
+    except Exception:  # pragma: no cover - defensive
+        logger.error("FATAL: density recompute failed", exc_info=True)
+        raise
+    # Update duct_result with unified temperature and density
+    duct_json = outdir / "duct_result.json"
+    try:
+        dj = json.loads(duct_json.read_text()) if duct_json.exists() else {}
+    except Exception:
+        dj = {}
+    dj.update(
+        {
+            "temp_K_mean": T_K,
+            "temp_C_mean": T_K - 273.15,
+            "rho_kg_m3": rho_used,
+            "rho_source": rho_src,
+        }
+    )
+    duct_json.write_text(json.dumps(dj, indent=2))
     # Optional transmitter setpoints
     sp_csv = cfg.setpoints_csv or (site.defaults.get("setpoints_csv") if site and site.defaults else None)
     # Use the extracted overlay (workbook mode) by default
@@ -518,7 +530,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "site_name": site.name,
         "r": r,
         "beta": beta,
-        "thermo_source": thermo_source,
+        "thermo_source": thermo_meta,
         "A1_m2": A1,
         "T_K": T_K,
         "rho_kg_m3": rho_final,
