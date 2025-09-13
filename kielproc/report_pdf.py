@@ -210,18 +210,21 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
         m_, c_ = np.linalg.lstsq(X, y, rcond=None)[0]
         return float(max(m_,0.0)), float(max(c_,0.0))
 
-    # operating band: prefer meta/summary, else compute from overlay, else default
+    # operating band: prefer meta/summary, else compute from overlay
     ob = meta.get("operating_band_mbar") or s.get("operating_band_mbar") or {}
-    lo = ob.get("p5_mbar"); hi = ob.get("p95_mbar")
-    if not (isinstance(lo,(int,float)) and isinstance(hi,(int,float))):
+    p5 = ob.get("p5_mbar"); p95 = ob.get("p95_mbar")
+    if not (isinstance(p5, (int, float)) and isinstance(p95, (int, float))):
         if n > 0:
-            lo = float(np.percentile(overlay_dp, 5.0))
-            hi = float(np.percentile(overlay_dp, 95.0))
-            if hi - lo < 1e-6:
-                hi = lo + 0.2
+            p5 = float(np.percentile(overlay_dp, 5.0))
+            p95 = float(np.percentile(overlay_dp, 95.0))
+            if p95 - p5 < 1e-6:
+                p95 = p5 + 0.2
         else:
-            lo, hi = 2.0, 6.0
-    lo = max(1e-6, lo); hi = max(lo+1e-6, hi)
+            p5 = p95 = None
+    # fallbacks for downstream computations (use defaults if absent)
+    lo = float(p5) if isinstance(p5, (int, float)) else 2.0
+    hi = float(p95) if isinstance(p95, (int, float)) else 6.0
+    lo = max(1e-6, lo); hi = max(lo + 1e-6, hi)
     mid = 0.5*(lo+hi)
 
     # reference function and helpers
@@ -320,21 +323,34 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
                      extra_txt))
     L.append(f"Site: {s.get('site_name','')}")
     L.append(f"Barometric pressure: {baro_line}")
+    label = "overlay"  # avoid ambiguity with 'current' (ohmic/time)
+    if p5 is not None and p95 is not None:
+        L.append(f"Operating band ({label}): {p5:.5g}–{p95:.5g} mbar (P5–P95)")
+    else:
+        L.append(f"Operating band ({label}): n/a (no overlay DP present)")
+
     # Temperature & density (if present)
     T_K_val = s.get("T_K")
-    rho_val = s.get("rho_kg_m3")
-    rho_src = s.get("rho_source")
+    rho = s.get("rho_kg_m3", None)
+    rho_src = s.get("rho_source", None)
+    if rho is None:
+        try:
+            duct = json.load(open(Path(outdir) / "duct_result.json"))
+            rho = duct.get("rho_kg_m3", None)
+            rho_src = duct.get("rho_source", rho_src)
+        except Exception:
+            pass
     if isinstance(T_K_val, (int, float)):
         L.append(f"Process temperature: {T_K_val:.2f} K ({T_K_val-273.15:.1f} C)")
     L.append(
         "Density ρ = {} kg·m⁻³  (source: {}; p_s_used = {} Pa; mode = {})".format(
-            s.get("rho_kg_m3", "n/a"),
-            s.get("rho_source", "n/a"),
+            f"{rho:.6g}" if isinstance(rho, (int, float)) else "n/a",
+            rho_src if rho_src else "n/a",
             s.get("p_plane_static_pa_mean", "n/a"),
             s.get("static_source_mode", "n/a"),
         )
     )
-    if isinstance(rho_val, (int, float)) and (rho_val < 0.2 or rho_val > 2.0):
+    if isinstance(rho, (int, float)) and (rho < 0.2 or rho > 2.0):
         L.append("WARNING: implausible density — check baro/T units.")
     if n > 0:
         L.append("")  # spacer
