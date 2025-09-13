@@ -431,7 +431,11 @@ def _page_inputs_snapshot(outdir: Path, summary_path: Path) -> plt.Figure:
 
 
 # ---------- NEW: Data quality & exclusions ----------
-def _page_data_quality(outdir: Path) -> plt.Figure:
+def _page_data_quality(outdir: Path, summary_path: Path) -> plt.Figure:
+    s = json.loads(Path(summary_path).read_text())
+    qc = s.get("qc", {}) or {}
+    xi_meta = (s.get("profile_xi", {}) or {}).get("meta", {})
+
     L = []
     L.append("Data quality and exclusions:")
     comb = Path(outdir) / "transmitter_lookup_combined.csv"
@@ -456,6 +460,34 @@ def _page_data_quality(outdir: Path) -> plt.Figure:
                 L.append(f"Disabled/zero-weight ports: {disabled}")
     else:
         L.append("Per-port CSV not present.")
+
+    if qc.get("enabled", False):
+        L.append("")
+        L.append("QC summary:")
+        L.append(
+            "  Adjacency co-variation: {} (min r = {:.2f})".format(
+                "non-uniform" if qc.get("nonuniform_adjacency", False) else "ok",
+                float(qc.get("adjacency_min_r", 0.0)),
+            )
+        )
+        trav = qc.get("traverse", {}) or {}
+        if trav:
+            L.append(
+                "  Traverse bias: avg={:+.3f}   max_port={:+.3f}".format(
+                    float(trav.get("bias_avg", 0.0)),
+                    float(trav.get("max_port_bias", 0.0)),
+                )
+            )
+            bad = trav.get("bad_ports")
+            if bad:
+                L.append(f"    Bad ports: {bad}")
+        if xi_meta:
+            used = [
+                f"P{k}:{('xi' if v.get('n_xi', 0) > 0 else 'time')}"
+                for k, v in xi_meta.items()
+            ]
+            L.append("  ξ-profile aggregation: " + ", ".join(used))
+
     return _fig_text("Data quality", L)
 
 
@@ -878,7 +910,7 @@ def build_run_report_pdf(
         # 1) Inputs snapshot
         pdf.savefig(_page_inputs_snapshot(outdir, summary_path)); plt.close()
         # 2) Data quality & exclusions
-        pdf.savefig(_page_data_quality(outdir)); plt.close()
+        pdf.savefig(_page_data_quality(outdir, summary_path)); plt.close()
         # 3) Operating band table & verdict
         pdf.savefig(_page_band_table_and_verdict(outdir, summary_path)); plt.close()
         # 4) Before/after error bars
