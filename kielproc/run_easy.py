@@ -22,7 +22,6 @@ from .tools.legacy_overlay import (
     extract_piccolo_range_and_avg_current,
     extract_process_temperature_from_workbook,
 )
-from .tools.venturi_builder import build_venturi_curve
 from .tools.recalc import recompute_duct_result_with_rho
 from .profile_xi import aggregate_by_xi
 from .temp_select import pick_duct_temperature_K
@@ -82,6 +81,10 @@ class RunConfig:
     lookup_dp_max_mbar: float = 10.0
     # Optional correction factor plane→throat (loss/recovery). Default 1.0
     plane_to_throat_coeff: float = 1.0
+    # Optional Venturi ISO curve parameters
+    venturi_C: float = 0.98
+    venturi_eps: float = 1.0
+    At_m2: Optional[float] = None
 
 
 def _resolve_site(cfg: RunConfig) -> SitePreset:
@@ -671,6 +674,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "beta": beta,
         "thermo_source": thermo_meta,
         "A1_m2": A1,
+        "At_m2": At,
         "T_K": T_K,
         "rho_kg_m3": rho_final,
         "rho_source": rho_src_final,
@@ -717,19 +721,48 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     if cal.get("K_uic") is not None:
         summary["K_uic"] = cal["K_uic"]
 
-    # Venturi curve using final density (if geometry present)
-    venturi_json_path = None
-    if (beta is not None) and (r is not None):
-        venturi_json_path = outdir / "venturi_result.json"
-        vent = build_venturi_curve(beta=beta, r=r, A1=A1, rho=rho_final, m_dot_hint_kg_s=m_dot_final)
-        if vent:
-            venturi_json_path.write_text(json.dumps(vent, indent=2))
-            summary["venturi_result_json"] = str(venturi_json_path)
-        else:
-            summary["venturi_result_json"] = None
+    # --- Venturi curve (mass-flow domain) ---
+    # Geometry-only curve and an ISO-style curve with configurable C and epsilon
+    venturi_json_path = outdir / "venturi_result.json"
+    vent_C = float(getattr(cfg, "venturi_C", 0.98))
+    vent_eps = float(getattr(cfg, "venturi_eps", 1.0))
+    curve: Dict[str, Any] = {}
+    try:
+        At_val = float(getattr(cfg, "At_m2", None) or (At if At is not None else 1.8))
+        if (
+            beta is not None
+            and np.isfinite(beta)
+            and np.isfinite(At_val)
+            and (rho_final is not None)
+        ):
+            m_dot_ref = float(m_dot_final) if m_dot_final else 0.0
+            m_grid = np.linspace(0.0, max(m_dot_ref * 1.6, 10.0), 200)
+            k_geom = (1.0 - beta**4) / (2.0 * rho_final * (At_val**2))
+            dp_pa_geom = k_geom * (m_grid**2)
+            k_iso = k_geom / max((vent_C * vent_eps) ** 2, 1e-9)
+            dp_pa_iso = k_iso * (m_grid**2)
+            curve = {
+                "beta": float(beta),
+                "At_m2": float(At_val),
+                "rho_kg_m3": float(rho_final),
+                "C": vent_C,
+                "epsilon": vent_eps,
+                "m_dot_kg_s_grid": m_grid.tolist(),
+                "dp_pa_geom_grid": dp_pa_geom.tolist(),
+                "dp_pa_iso_grid": dp_pa_iso.tolist(),
+                "op_point": {
+                    "m_dot_kg_s": float(m_dot_ref) if m_dot_ref else None,
+                    "dp_pa_est": float(delta_p_vent) if delta_p_vent is not None else None,
+                },
+            }
+    except Exception:
+        curve = {}
+    if curve:
+        venturi_json_path.write_text(json.dumps(curve, indent=2))
+        summary["venturi_result_json"] = str(venturi_json_path)
     else:
         summary["venturi_result_json"] = None
-        summary["venturi_note"] = "Skipped: require both beta and r; set in GUI → Geometry."
+        summary["venturi_note"] = "Skipped: require beta, At, and density."
     (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
 
     # ---------------------- Single PDF report ------------------------
