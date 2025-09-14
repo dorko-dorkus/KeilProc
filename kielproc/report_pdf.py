@@ -471,6 +471,30 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
             L.append(f"  • Implied current from overlay DP: {impliedI[0]:.4f}–{impliedI[1]:.4f} mA")
     else:
         L.append("Overlay: not present (reference curves only).")
+    # --- Plane↔Throat reconciliation ---
+    rec = s.get("reconcile", {}) or {}
+    if rec:
+        dp_geom = rec.get("dp_pred_geom_mbar", None)
+        dp_corr = rec.get("dp_pred_corr_mbar", None)
+        dp_p50  = rec.get("dp_overlay_p50_mbar", None)
+        dp_p5   = rec.get("dp_overlay_p5_mbar", None)
+        dp_p95  = rec.get("dp_overlay_p95_mbar", None)
+        C_f     = rec.get("C_f", 1.0)
+        if isinstance(dp_geom, (int, float)) or isinstance(dp_corr, (int, float)):
+            if all(isinstance(x, (int, float)) for x in [dp_p5, dp_p50, dp_p95]):
+                L.append(f"Overlay Δp: P50 = {dp_p50:.4g} mbar; band {dp_p5:.4g}–{dp_p95:.4g} mbar")
+            if isinstance(dp_geom, (int, float)):
+                errg = rec.get("dp_error_geom_pct_vs_p50", None)
+                L.append(
+                    f"Predicted Piccolo Δp (geometry only): {dp_geom:.4g} mbar" +
+                    (f"  (error vs median {errg:+.2f}%)" if isinstance(errg, (int, float)) else "")
+                )
+            if isinstance(dp_corr, (int, float)):
+                errc = rec.get("dp_error_corr_pct_vs_p50", None)
+                L.append(
+                    f"Predicted Piccolo Δp (reconciled, C_f={C_f:.3f}): {dp_corr:.4g} mbar" +
+                    (f"  (error vs median {errc:+.2f}%)" if isinstance(errc, (int, float)) else "")
+                )
     if dp_cross is not None:
         L.append(f"Crossover (configured 820 = UIC): DP ~= {dp_cross:.3f} mbar")
     L.append("")  # spacer
@@ -880,10 +904,18 @@ def _fig_flow_reference_with_overlay(outdir: Path) -> plt.Figure | None:
         if {"data_DP_mbar","data_Flow_UIC_tph","data_Flow_820_tph"}.issubset(dd.columns):
             ax.scatter(dd["data_DP_mbar"], dd["data_Flow_UIC_tph"], s=12, alpha=0.7, label="UIC – data")
             ax.scatter(dd["data_DP_mbar"], dd["data_Flow_820_tph"], s=12, alpha=0.7, label="820 – data")
+    s_all = _load_json(Path(outdir) / "summary.json")
+    rec = (s_all or {}).get("reconcile", {}) or {}
+    dp_geom = rec.get("dp_pred_geom_mbar", None)
+    dp_corr = rec.get("dp_pred_corr_mbar", None)
+    if isinstance(dp_geom, (int, float)):
+        ax.axvline(dp_geom, linestyle=":", linewidth=1.1, alpha=0.9, label=f"Predicted Δp (geom) = {dp_geom:.3g} mbar")
+    if isinstance(dp_corr, (int, float)) and (dp_corr != dp_geom):
+        ax.axvline(dp_corr, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Predicted Δp (reconciled) = {dp_corr:.3g} mbar")
     ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
     ax.set_title("Flow lookup: reference (constant) with data overlay")
     ax.set_axisbelow(True); ax.grid(True, alpha=0.35)
-    _shade_recommended_band(ax, outdir, _load_json(Path(outdir) / "summary.json"), label_prefix="Recommended")
+    _shade_recommended_band(ax, outdir, s_all, label_prefix="Recommended")
     handles, labels = ax.get_legend_handles_labels()
     if labels:
         ax.legend(loc="best")
@@ -933,6 +965,13 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
             title += f"\n(Piccolo range {rng:.3f} mbar → I {I_lo:.4f}–{I_hi:.4f} mA)"
     except Exception:
         pass
+    rec = (s_all or {}).get("reconcile", {}) or {}
+    dp_geom = rec.get("dp_pred_geom_mbar", None)
+    dp_corr = rec.get("dp_pred_corr_mbar", None)
+    if isinstance(dp_geom, (int, float)):
+        ax.axvline(dp_geom, linestyle=":", linewidth=1.1, alpha=0.9, label=f"Predicted Δp (geom) = {dp_geom:.3g} mbar")
+    if isinstance(dp_corr, (int, float)) and (dp_corr != dp_geom):
+        ax.axvline(dp_corr, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Predicted Δp (reconciled) = {dp_corr:.3g} mbar")
     ax.set_title(title); ax.set_axisbelow(True); ax.grid(True, alpha=0.35)
     _shade_recommended_band(ax, outdir, s_all, label_prefix="Recommended")
     handles, labels = ax.get_legend_handles_labels()
