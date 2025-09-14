@@ -955,12 +955,19 @@ def _fig_flow_reference_with_overlay(outdir: Path) -> plt.Figure | None:
     rec = (s_all or {}).get("reconcile", {}) or {}
     dp_geom = rec.get("dp_pred_geom_mbar", None)
     dp_corr = rec.get("dp_pred_corr_mbar", None)
+    # Shade predicted bands from qs (geom and reconciled)
+    pb_g = rec.get("pred_band_geom_mbar", None)
+    pb_c = rec.get("pred_band_corr_mbar", None)
+    if isinstance(pb_g, (list, tuple)) and len(pb_g) == 2:
+        ax.axvspan(min(pb_g), max(pb_g), alpha=0.10, label="Pred band (geom)")
+    if isinstance(pb_c, (list, tuple)) and len(pb_c) == 2:
+        ax.axvspan(min(pb_c), max(pb_c), alpha=0.12, label="Pred band (reconciled)")
     if isinstance(dp_geom, (int, float)):
         ax.axvline(dp_geom, linestyle=":", linewidth=1.1, alpha=0.9, label=f"Pred Δp (geom) {dp_geom:.3g} mbar")
     if isinstance(dp_corr, (int, float)) and (dp_corr != dp_geom):
         ax.axvline(dp_corr, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Pred Δp (reconciled) {dp_corr:.3g} mbar")
     ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
-    ax.set_title("Flow lookup: reference (constant) with data overlay")
+    ax.set_title("Flow lookup: reference (constant) with data overlay and predicted band")
     ax.set_axisbelow(True); ax.grid(True, alpha=0.35)
     _shade_recommended_band(ax, outdir, s_all, label_prefix="Recommended")
     handles, labels = ax.get_legend_handles_labels()
@@ -1033,11 +1040,17 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
     rec = (s_all or {}).get("reconcile", {}) or {}
     dp_geom = rec.get("dp_pred_geom_mbar", None)
     dp_corr_pred = rec.get("dp_pred_corr_mbar", None)
+    pb_g = rec.get("pred_band_geom_mbar", None)
+    pb_c = rec.get("pred_band_corr_mbar", None)
+    if isinstance(pb_g, (list, tuple)) and len(pb_g) == 2:
+        ax.axvspan(max(lo, min(pb_g)), min(hi, max(pb_g)), alpha=0.10, label="Pred band (geom)")
+    if isinstance(pb_c, (list, tuple)) and len(pb_c) == 2:
+        ax.axvspan(max(lo, min(pb_c)), min(hi, max(pb_c)), alpha=0.12, label="Pred band (reconciled)")
     if isinstance(dp_geom, (int, float)):
         ax.axvline(dp_geom, linestyle=":", linewidth=1.1, alpha=0.9, label=f"Pred Δp (geom) {dp_geom:.3g} mbar")
     if isinstance(dp_corr_pred, (int, float)) and (dp_corr_pred != dp_geom):
         ax.axvline(dp_corr_pred, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Pred Δp (reconciled) {dp_corr_pred:.3g} mbar")
-    ax.set_title(title); ax.set_axisbelow(True); ax.grid(True, alpha=0.35)
+    ax.set_title(title + " + predicted band"); ax.set_axisbelow(True); ax.grid(True, alpha=0.35)
     _shade_recommended_band(ax, outdir, s_all, label_prefix="Recommended")
     handles, labels = ax.get_legend_handles_labels()
     if labels:
