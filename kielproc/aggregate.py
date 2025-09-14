@@ -222,8 +222,12 @@ def _normalize_df(df_raw: pd.DataFrame, baro_cli_pa: float | None):
     if "Replicate" in df.columns:
         out["Replicate"] = pd.to_numeric(df["Replicate"], errors="coerce").fillna(method="ffill").fillna(0).astype(int)
 
-    # Absolute static: prefer explicit absolute column, otherwise add barometric to gauge
     cols = {c.lower(): c for c in df.columns}
+    pic_key = next((cols[k] for k in ("piccolo_ma", "piccolo") if k in cols), None)
+    if pic_key:
+        out["piccolo_mA"] = pd.to_numeric(df[pic_key], errors="coerce")
+
+    # Absolute static: prefer explicit absolute column, otherwise add barometric to gauge
     def _col(name: str) -> pd.Series:
         return _coerce("Static", df[name], _infer_unit_from_name(name, "Pa"))
 
@@ -265,6 +269,11 @@ def _normalize_df(df_raw: pd.DataFrame, baro_cli_pa: float | None):
 
     st_unit = _infer_unit_from_name(st_src, "Pa") if st_src else None
     out["Static_abs_Pa"] = static_abs
+    if cols.get("static_gauge_pa"):
+        try:
+            out["static_gauge_pa"] = _col(cols["static_gauge_pa"])
+        except Exception:
+            pass
     tC = out["Temperature"].to_numpy(float)
     T_K = tC + 273.15
     meta = {
@@ -356,13 +365,13 @@ def integrate_run(
     if not pairs:
         raise FileNotFoundError(f"No usable port CSVs found in {run_dir}")
 
-    rows, normalize_meta = [], {}
+    rows, ts_rows, normalize_meta = [], [], {}
     for port_id, pf in pairs:
         raw = pd.read_csv(pf)
         norm, meta = _normalize_df(raw, baro_cli_pa)
         normalize_meta[pf.name] = meta
         scal = _port_scalars_from_samples(norm, cfg.replicate_strategy)
-        rows.append({
+        row = {
             "Port": port_id,
             "FileStem": pf.stem,
             "VP_pa_mean": float(pd.to_numeric(norm["VP"]).mean()),
@@ -371,7 +380,12 @@ def integrate_run(
             **scal,
             "p_abs_source": meta.get("p_abs_source", ""),
             "replicate_strategy": (cfg.replicate_strategy if "Replicate" in norm.columns else "none"),
-        })
+        }
+        if "piccolo_mA" in norm.columns:
+            row["piccolo_mA_mean"] = float(pd.to_numeric(norm["piccolo_mA"], errors="coerce").mean())
+        rows.append(row)
+        norm["Port"] = port_id
+        ts_rows.append(norm)
     per = pd.DataFrame(rows).sort_values("Port").reset_index(drop=True)
 
     # weights
@@ -425,5 +439,6 @@ def integrate_run(
         "files": [p.name for _, p in pairs],
         "normalize_meta": normalize_meta,
         "pairs": pairs,
+        "per_sample": (pd.concat(ts_rows, ignore_index=True) if ts_rows else pd.DataFrame()),
         "skipped": skipped,
     }

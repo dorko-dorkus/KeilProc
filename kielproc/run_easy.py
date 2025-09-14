@@ -239,7 +239,28 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     outdir = Path(cfg.output_dir) / "_integrated"
     outdir.mkdir(parents=True, exist_ok=True)
     per_port_df = res.get("per_port")
+    ts_df = res.get("per_sample")
     (outdir / "per_port.csv").write_text(per_port_df.to_csv(index=False))
+    if ts_df is not None:
+        ts = ts_df.rename(
+            columns={
+                "VP": "VP_pa",
+                "Temperature": "T_C",
+                "Static_abs_Pa": "p_s_pa",
+            }
+        )
+        rename = {
+            "VP_pa": "VP_pa",
+            "T_C": "T_C",
+            "static_gauge_pa": "static_gauge_pa",
+            "piccolo_mA": "piccolo_mA",
+            "p_s_pa": "p_s_pa",
+            "Port": "Port",
+        }
+        ts_cols = [c for c in rename if c in ts.columns]
+        ts[ts_cols].to_csv(outdir / "normalized_timeseries.csv", index=False)
+    else:
+        (outdir / "normalized_timeseries.csv").write_text("")
     (outdir / "duct_result.json").write_text(json.dumps(res.get("duct", {}), indent=2))
     (outdir / "normalize_meta.json").write_text(json.dumps(res.get("normalize_meta", {}), indent=2))
     piccolo_overlay_csv = None
@@ -668,6 +689,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "input_mode": input_mode,
         "prepared_input_dir": str(prepared_dir),
         "per_port_csv": str(outdir / "per_port.csv"),
+        "normalized_timeseries_csv": str(outdir / "normalized_timeseries.csv"),
         "duct_result_json": str(outdir / "duct_result.json"),
         "normalize_meta_json": str(outdir / "normalize_meta.json"),
         # Record exactly what we used
