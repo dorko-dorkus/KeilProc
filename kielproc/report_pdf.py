@@ -62,25 +62,35 @@ def _load_tx_tables(outdir: Path) -> Tuple[Optional[pd.DataFrame], Optional[pd.D
 
 
 def _overlay_dp_series(comb: Optional[pd.DataFrame], data: Optional[pd.DataFrame]) -> pd.Series:
-    """Extract overlay DP vector robustly from either combined or data table."""
+    """Extract overlay DP vector robustly from either combined or data table.
+
+    Prefers corrected DP (``*_corr``) if present, otherwise falls back to
+    legacy column names.
+    """
     if comb is not None:
-        if "data_DP_mbar" in comb.columns:  # side-by-side shape
-            s = pd.to_numeric(comb["data_DP_mbar"], errors="coerce").dropna()
-            if s.size > 0:
-                return s
-        if "DP_mbar" in comb.columns:       # vertical union shape
-            df = comb
-            if "source" in df.columns:
-                df = df[df["source"].astype(str).str.lower() == "overlay"]
-            elif "is_reference" in df.columns:
-                df = df[df["is_reference"] == False]
-            s = pd.to_numeric(df["DP_mbar"], errors="coerce").dropna()
-            if s.size > 0:
-                return s
-    if data is not None and "data_DP_mbar" in data.columns:
-        s = pd.to_numeric(data["data_DP_mbar"], errors="coerce").dropna()
-        if s.size > 0:
-            return s
+        # Side-by-side shape with explicit data_ prefix
+        for col in ["data_DP_mbar_corr", "data_DP_mbar"]:
+            if col in comb.columns:
+                s = pd.to_numeric(comb[col], errors="coerce").dropna()
+                if s.size > 0:
+                    return s
+        # Vertical union shape
+        for col in ["DP_mbar_corr", "DP_mbar"]:
+            if col in comb.columns:
+                df = comb
+                if "source" in df.columns:
+                    df = df[df["source"].astype(str).str.lower() == "overlay"]
+                elif "is_reference" in df.columns:
+                    df = df[df["is_reference"] == False]
+                s = pd.to_numeric(df[col], errors="coerce").dropna()
+                if s.size > 0:
+                    return s
+    if data is not None:
+        for col in ["data_DP_mbar_corr", "data_DP_mbar"]:
+            if col in data.columns:
+                s = pd.to_numeric(data[col], errors="coerce").dropna()
+                if s.size > 0:
+                    return s
     return pd.Series(dtype=float)
 
 
@@ -497,6 +507,19 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
                 )
     if dp_cross is not None:
         L.append(f"Crossover (configured 820 = UIC): DP ~= {dp_cross:.3f} mbar")
+    # Piccolo fit/residuals
+    try:
+        rec2 = (s or {}).get("reconcile", {}) or {}
+        fit = rec2.get("piccolo_fit", {}) or {}
+        if fit:
+            L.append(
+                f"Piccolo calibration: DP = {fit.get('a_mbar_per_mA','?'):.5g}·I + {fit.get('b_mbar','?'):.5g}  (mbar, mA)"
+            )
+            L.append(
+                f"  Fit points: {fit.get('n_points','?')}, LRV={fit.get('lrv_mbar','?')} mbar, URV={fit.get('urv_mbar','?')} mbar"
+            )
+    except Exception:
+        pass
     L.append("")  # spacer
     L.append("Context & Method:")
     L.append("  • UIC: Flow_UIC = K*sqrt(DP)  (K in t/h per sqrt(mbar), DP in mbar)")
@@ -893,18 +916,44 @@ def _fig_per_port_table(per_port_csv: Path) -> plt.Figure | None:
 
 def _fig_flow_reference_with_overlay(outdir: Path) -> plt.Figure | None:
     ref = Path(outdir) / "transmitter_lookup_reference.csv"
-    if not ref.exists(): return None
+    if not ref.exists():
+        return None
     dref = pd.read_csv(ref)
-    fig = plt.figure(figsize=(11.69, 8.27)); ax = fig.add_subplot(111)
+    fig = plt.figure(figsize=(11.69, 8.27))
+    ax = fig.add_subplot(111)
     ax.plot(dref["ref_DP_mbar"], dref["ref_Flow_UIC_tph"], label="UIC (√DP) – reference")
     ax.plot(dref["ref_DP_mbar"], dref["ref_Flow_820_tph"], label="820 (linear) – reference")
+
+    s_all = _load_json(Path(outdir) / "summary.json")
+    cal = (s_all or {}).get("calibration", {}) or {}
+    K = cal.get("K_uic", (s_all or {}).get("K_uic"))
+    m = cal.get("m_820", (s_all or {}).get("m_820"))
+    c = cal.get("c_820", (s_all or {}).get("c_820"))
+
+    def _uic(dp: np.ndarray) -> np.ndarray:
+        if not isinstance(K, (int, float)):
+            return np.full_like(np.asarray(dp, float), np.nan)
+        return float(K) * np.sqrt(np.clip(np.asarray(dp, float), 0.0, None))
+
+    def _lin820(dp: np.ndarray) -> np.ndarray:
+        if not all(isinstance(v, (int, float)) for v in (m, c)):
+            return np.full_like(np.asarray(dp, float), np.nan)
+        return float(m) * np.asarray(dp, float) + float(c)
+
     data = Path(outdir) / "transmitter_lookup_data.csv"
     if data.exists():
         dd = pd.read_csv(data)
-        if {"data_DP_mbar","data_Flow_UIC_tph","data_Flow_820_tph"}.issubset(dd.columns):
-            ax.scatter(dd["data_DP_mbar"], dd["data_Flow_UIC_tph"], s=12, alpha=0.7, label="UIC – data")
-            ax.scatter(dd["data_DP_mbar"], dd["data_Flow_820_tph"], s=12, alpha=0.7, label="820 – data")
-    s_all = _load_json(Path(outdir) / "summary.json")
+        dp_raw = pd.to_numeric(dd.get("data_DP_mbar_raw", pd.Series([])), errors="coerce").dropna().to_numpy()
+        dp_corr = pd.to_numeric(dd.get("data_DP_mbar_corr", pd.Series([])), errors="coerce").dropna().to_numpy()
+        if dp_corr.size == 0 and "data_DP_mbar" in dd.columns:
+            dp_corr = pd.to_numeric(dd["data_DP_mbar"], errors="coerce").dropna().to_numpy()
+        if dp_raw.size:
+            ax.scatter(dp_raw, _uic(dp_raw), s=6, alpha=0.25, marker="o", label="UIC – data (raw)")
+            ax.scatter(dp_raw, _lin820(dp_raw), s=6, alpha=0.25, marker="o", label="820 – data (raw)")
+        if dp_corr.size:
+            ax.scatter(dp_corr, _uic(dp_corr), s=9, alpha=0.85, marker=".", label="UIC – data (corr)")
+            ax.scatter(dp_corr, _lin820(dp_corr), s=9, alpha=0.85, marker=".", label="820 – data (corr)")
+
     rec = (s_all or {}).get("reconcile", {}) or {}
     dp_geom = rec.get("dp_pred_geom_mbar", None)
     dp_corr = rec.get("dp_pred_corr_mbar", None)
@@ -931,13 +980,14 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
         return None
     dref = pd.read_csv(ref)
     dd = pd.read_csv(data)
-    need = {"data_DP_mbar", "data_Flow_UIC_tph", "data_Flow_820_tph"}
-    if not need.issubset(dd.columns):
+    dp_raw = pd.to_numeric(dd.get("data_DP_mbar_raw", pd.Series([])), errors="coerce").dropna()
+    dp_corr = pd.to_numeric(dd.get("data_DP_mbar_corr", pd.Series([])), errors="coerce").dropna()
+    if dp_corr.empty and "data_DP_mbar" in dd.columns:
+        dp_corr = pd.to_numeric(dd["data_DP_mbar"], errors="coerce").dropna()
+    if dp_corr.empty and dp_raw.empty:
         return None
-    dp = pd.to_numeric(dd["data_DP_mbar"], errors="coerce").dropna()
-    if dp.empty:
-        return None
-    dp_min = float(dp.min()); dp_max = float(dp.max()); span = dp_max - dp_min
+    dp_all = pd.concat([dp_corr, dp_raw]) if not dp_raw.empty else dp_corr
+    dp_min = float(dp_all.min()); dp_max = float(dp_all.max()); span = dp_max - dp_min
     pad = max(0.10 * span, 0.05)  # at least ±0.05 mbar
     lo = max(0.0, dp_min - pad)
     ref_max = float(dref["ref_DP_mbar"].max())
@@ -945,19 +995,45 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
     if hi <= lo:
         return None
     zr = dref[(dref["ref_DP_mbar"] >= lo) & (dref["ref_DP_mbar"] <= hi)]
-    fig = plt.figure(figsize=(11.69, 8.27)); ax = fig.add_subplot(111)
+    fig = plt.figure(figsize=(11.69, 8.27))
+    ax = fig.add_subplot(111)
     ax.plot(zr["ref_DP_mbar"], zr["ref_Flow_UIC_tph"], label="UIC (√DP) – reference", zorder=1)
     ax.plot(zr["ref_DP_mbar"], zr["ref_Flow_820_tph"], label="820 (linear) – reference", zorder=1)
-    ax.scatter(dd["data_DP_mbar"], dd["data_Flow_UIC_tph"], s=20, alpha=0.85, label="UIC – data", zorder=5)
-    ax.scatter(dd["data_DP_mbar"], dd["data_Flow_820_tph"], s=20, alpha=0.85, label="820 – data", zorder=5)
-    ax.set_xlim(lo, hi)
-    ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
-    # Title plus Piccolo current band if range is known
-    title = f"Flow lookup — overlay zoom (n={len(dp)}, DP {dp_min:.3f}–{dp_max:.3f} mbar)"
-    rng = I_lo = I_hi = None
-    s_all = {}
+
+    s_all: dict = {}
+    cal: dict = {}
     try:
         s_all = _load_json(Path(outdir) / "summary.json")
+        cal = (s_all or {}).get("calibration", {}) or {}
+    except Exception:
+        s_all = {}
+        cal = {}
+    K = cal.get("K_uic", (s_all or {}).get("K_uic"))
+    m = cal.get("m_820", (s_all or {}).get("m_820"))
+    c = cal.get("c_820", (s_all or {}).get("c_820"))
+
+    def _uic(dp: np.ndarray) -> np.ndarray:
+        if not isinstance(K, (int, float)):
+            return np.full_like(np.asarray(dp, float), np.nan)
+        return float(K) * np.sqrt(np.clip(np.asarray(dp, float), 0.0, None))
+
+    def _lin820(dp: np.ndarray) -> np.ndarray:
+        if not all(isinstance(v, (int, float)) for v in (m, c)):
+            return np.full_like(np.asarray(dp, float), np.nan)
+        return float(m) * np.asarray(dp, float) + float(c)
+
+    if dp_raw.size:
+        ax.scatter(dp_raw, _uic(dp_raw), s=20, alpha=0.25, marker="o", label="UIC – data (raw)", zorder=5)
+        ax.scatter(dp_raw, _lin820(dp_raw), s=20, alpha=0.25, marker="o", label="820 – data (raw)", zorder=5)
+    if dp_corr.size:
+        ax.scatter(dp_corr, _uic(dp_corr), s=20, alpha=0.85, marker=".", label="UIC – data (corr)", zorder=5)
+        ax.scatter(dp_corr, _lin820(dp_corr), s=20, alpha=0.85, marker=".", label="820 – data (corr)", zorder=5)
+
+    ax.set_xlim(lo, hi)
+    ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
+    title = f"Flow lookup — overlay zoom (n={len(dp_all)}, DP {dp_min:.3f}–{dp_max:.3f} mbar)"
+    rng = I_lo = I_hi = None
+    try:
         rng = (s_all.get("piccolo_info") or {}).get("range_mbar", None)
         if rng and rng > 0:
             I_lo = 4.0 + 16.0 * (dp_min / float(rng))
@@ -967,11 +1043,11 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
         pass
     rec = (s_all or {}).get("reconcile", {}) or {}
     dp_geom = rec.get("dp_pred_geom_mbar", None)
-    dp_corr = rec.get("dp_pred_corr_mbar", None)
+    dp_corr_pred = rec.get("dp_pred_corr_mbar", None)
     if isinstance(dp_geom, (int, float)):
         ax.axvline(dp_geom, linestyle=":", linewidth=1.1, alpha=0.9, label=f"Predicted Δp (geom) = {dp_geom:.3g} mbar")
-    if isinstance(dp_corr, (int, float)) and (dp_corr != dp_geom):
-        ax.axvline(dp_corr, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Predicted Δp (reconciled) = {dp_corr:.3g} mbar")
+    if isinstance(dp_corr_pred, (int, float)) and (dp_corr_pred != dp_geom):
+        ax.axvline(dp_corr_pred, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Predicted Δp (reconciled) = {dp_corr_pred:.3g} mbar")
     ax.set_title(title); ax.set_axisbelow(True); ax.grid(True, alpha=0.35)
     _shade_recommended_band(ax, outdir, s_all, label_prefix="Recommended")
     handles, labels = ax.get_legend_handles_labels()
@@ -1037,6 +1113,32 @@ def _fig_venturi_curve(outdir: Path) -> plt.Figure | None:
     return fig
 
 
+def _profiles_page(outdir: Path) -> Optional[plt.Figure]:
+    import glob, os
+    prof_dir = Path(outdir) / "profiles"
+    files = sorted(glob.glob(str(prof_dir / "P*_profile.csv")))
+    if not files:
+        return None
+    fig, axes = plt.subplots(2, 4, figsize=(10.5, 6.5), constrained_layout=True)
+    axes = axes.ravel()
+    for ax, fn in zip(axes, files[:8]):
+        df = pd.read_csv(fn)
+        xi = pd.to_numeric(df.get("xi", pd.Series([])), errors="coerce")
+        qs_med = pd.to_numeric(df.get("q_s_median", pd.Series([])), errors="coerce")
+        qs_s = pd.to_numeric(df.get("q_s_smoothed", pd.Series([])), errors="coerce")
+        Aj = pd.to_numeric(df.get("Aj", pd.Series([])), errors="coerce")
+        lbl = Path(fn).stem.replace("_profile", "")
+        if xi.notna().any() and qs_med.notna().any():
+            ax.plot(xi, qs_med, linewidth=1.0, label="median q_s(ξ)")
+        if xi.notna().any() and qs_s.notna().any():
+            ax.plot(xi, qs_s, linewidth=1.0, linestyle="--", label="smoothed")
+        ax.set_title(lbl, fontsize=9)
+        ax.set_xlabel("ξ"); ax.set_ylabel("q_s [Pa]")
+        ax.grid(True, alpha=0.2)
+        ax.legend(fontsize=7)
+    return fig
+
+
 def _fig_setpoints(outdir: Path) -> plt.Figure | None:
     csv = Path(outdir) / "transmitter_setpoints.csv"
     if not csv.exists(): return None
@@ -1096,6 +1198,9 @@ def build_run_report_pdf(
         if f: pdf.savefig(f); plt.close()
         # Venturi curve (optional)
         f = _fig_venturi_curve(outdir)
+        if f: pdf.savefig(f); plt.close()
+        # Profiles page (optional)
+        f = _profiles_page(outdir)
         if f: pdf.savefig(f); plt.close()
         # Setpoints plot (optional)
         f = _fig_setpoints(outdir)
