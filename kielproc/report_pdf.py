@@ -439,6 +439,13 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
         cov_txt = f" — coverage {rb_cov*100:.1f}%" if rb_cov is not None else ""
         L.append(f"Recommended DP band: {rb_lo:.5g}–{rb_hi:.5g} mbar{cov_txt}")
 
+    meta = _load_json(Path(outdir) / "normalize_meta.json")
+    if meta and isinstance(meta.get("sanity"), dict):
+        snt = meta["sanity"]
+        L.append(
+            f"Static sanity: median plane static = {snt.get('p_s_pa_median','n/a')} Pa ({snt.get('note','')})"
+        )
+
     # Temperature & density (if present)
     rho = s.get("rho_kg_m3", None); rho_src = s.get("rho_source", None)
     if rho is None:
