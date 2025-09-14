@@ -493,18 +493,18 @@ def _summary_merged(outdir: Path, summary_path: Path) -> plt.Figure:
         if isinstance(dp_geom, (int, float)) or isinstance(dp_corr, (int, float)):
             if all(isinstance(x, (int, float)) for x in [dp_p5, dp_p50, dp_p95]):
                 L.append(f"Overlay Δp: P50 = {dp_p50:.4g} mbar; band {dp_p5:.4g}–{dp_p95:.4g} mbar")
-            if isinstance(dp_geom, (int, float)):
-                errg = rec.get("dp_error_geom_pct_vs_p50", None)
-                L.append(
-                    f"Predicted Piccolo Δp (geometry only): {dp_geom:.4g} mbar" +
-                    (f"  (error vs median {errg:+.2f}%)" if isinstance(errg, (int, float)) else "")
-                )
-            if isinstance(dp_corr, (int, float)):
-                errc = rec.get("dp_error_corr_pct_vs_p50", None)
-                L.append(
-                    f"Predicted Piccolo Δp (reconciled, C_f={C_f:.3f}): {dp_corr:.4g} mbar" +
-                    (f"  (error vs median {errc:+.2f}%)" if isinstance(errc, (int, float)) else "")
-                )
+        if isinstance(dp_geom, (int, float)):
+            errg = rec.get("dp_error_geom_pct_vs_p50", None)
+            L.append(
+                f"Pred Δp (geom) = {dp_geom:.4g} mbar" +
+                (f"  (error {errg:+.2f}%)" if isinstance(errg, (int, float)) else "")
+            )
+        if isinstance(dp_corr, (int, float)):
+            errc = rec.get("dp_error_corr_pct_vs_p50", None)
+            L.append(
+                f"Pred Δp (reconciled, C_f={C_f:.3f}) = {dp_corr:.4g} mbar" +
+                (f"  (error {errc:+.2f}%)" if isinstance(errc, (int, float)) else "")
+            )
     if dp_cross is not None:
         L.append(f"Crossover (configured 820 = UIC): DP ~= {dp_cross:.3f} mbar")
     # Piccolo fit/residuals
@@ -927,18 +927,11 @@ def _fig_flow_reference_with_overlay(outdir: Path) -> plt.Figure | None:
     s_all = _load_json(Path(outdir) / "summary.json")
     cal = (s_all or {}).get("calibration", {}) or {}
     K = cal.get("K_uic", (s_all or {}).get("K_uic"))
-    m = cal.get("m_820", (s_all or {}).get("m_820"))
-    c = cal.get("c_820", (s_all or {}).get("c_820"))
 
     def _uic(dp: np.ndarray) -> np.ndarray:
         if not isinstance(K, (int, float)):
             return np.full_like(np.asarray(dp, float), np.nan)
         return float(K) * np.sqrt(np.clip(np.asarray(dp, float), 0.0, None))
-
-    def _lin820(dp: np.ndarray) -> np.ndarray:
-        if not all(isinstance(v, (int, float)) for v in (m, c)):
-            return np.full_like(np.asarray(dp, float), np.nan)
-        return float(m) * np.asarray(dp, float) + float(c)
 
     data = Path(outdir) / "transmitter_lookup_data.csv"
     if data.exists():
@@ -948,19 +941,17 @@ def _fig_flow_reference_with_overlay(outdir: Path) -> plt.Figure | None:
         if dp_corr.size == 0 and "data_DP_mbar" in dd.columns:
             dp_corr = pd.to_numeric(dd["data_DP_mbar"], errors="coerce").dropna().to_numpy()
         if dp_raw.size:
-            ax.scatter(dp_raw, _uic(dp_raw), s=6, alpha=0.25, marker="o", label="UIC – data (raw)")
-            ax.scatter(dp_raw, _lin820(dp_raw), s=6, alpha=0.25, marker="o", label="820 – data (raw)")
+            ax.scatter(dp_raw, _uic(dp_raw), s=6, alpha=0.25, marker="o", label="Overlay (raw)")
         if dp_corr.size:
-            ax.scatter(dp_corr, _uic(dp_corr), s=9, alpha=0.85, marker=".", label="UIC – data (corr)")
-            ax.scatter(dp_corr, _lin820(dp_corr), s=9, alpha=0.85, marker=".", label="820 – data (corr)")
+            ax.scatter(dp_corr, _uic(dp_corr), s=9, alpha=0.85, marker=".", label="Overlay (corrected)")
 
     rec = (s_all or {}).get("reconcile", {}) or {}
     dp_geom = rec.get("dp_pred_geom_mbar", None)
     dp_corr = rec.get("dp_pred_corr_mbar", None)
     if isinstance(dp_geom, (int, float)):
-        ax.axvline(dp_geom, linestyle=":", linewidth=1.1, alpha=0.9, label=f"Predicted Δp (geom) = {dp_geom:.3g} mbar")
+        ax.axvline(dp_geom, linestyle=":", linewidth=1.1, alpha=0.9, label=f"Pred Δp (geom) {dp_geom:.3g} mbar")
     if isinstance(dp_corr, (int, float)) and (dp_corr != dp_geom):
-        ax.axvline(dp_corr, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Predicted Δp (reconciled) = {dp_corr:.3g} mbar")
+        ax.axvline(dp_corr, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Pred Δp (reconciled) {dp_corr:.3g} mbar")
     ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
     ax.set_title("Flow lookup: reference (constant) with data overlay")
     ax.set_axisbelow(True); ax.grid(True, alpha=0.35)
@@ -1009,25 +1000,16 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
         s_all = {}
         cal = {}
     K = cal.get("K_uic", (s_all or {}).get("K_uic"))
-    m = cal.get("m_820", (s_all or {}).get("m_820"))
-    c = cal.get("c_820", (s_all or {}).get("c_820"))
 
     def _uic(dp: np.ndarray) -> np.ndarray:
         if not isinstance(K, (int, float)):
             return np.full_like(np.asarray(dp, float), np.nan)
         return float(K) * np.sqrt(np.clip(np.asarray(dp, float), 0.0, None))
 
-    def _lin820(dp: np.ndarray) -> np.ndarray:
-        if not all(isinstance(v, (int, float)) for v in (m, c)):
-            return np.full_like(np.asarray(dp, float), np.nan)
-        return float(m) * np.asarray(dp, float) + float(c)
-
     if dp_raw.size:
-        ax.scatter(dp_raw, _uic(dp_raw), s=20, alpha=0.25, marker="o", label="UIC – data (raw)", zorder=5)
-        ax.scatter(dp_raw, _lin820(dp_raw), s=20, alpha=0.25, marker="o", label="820 – data (raw)", zorder=5)
+        ax.scatter(dp_raw, _uic(dp_raw), s=20, alpha=0.25, marker="o", label="Overlay (raw)", zorder=5)
     if dp_corr.size:
-        ax.scatter(dp_corr, _uic(dp_corr), s=20, alpha=0.85, marker=".", label="UIC – data (corr)", zorder=5)
-        ax.scatter(dp_corr, _lin820(dp_corr), s=20, alpha=0.85, marker=".", label="820 – data (corr)", zorder=5)
+        ax.scatter(dp_corr, _uic(dp_corr), s=20, alpha=0.85, marker=".", label="Overlay (corrected)", zorder=5)
 
     ax.set_xlim(lo, hi)
     ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
@@ -1045,9 +1027,9 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
     dp_geom = rec.get("dp_pred_geom_mbar", None)
     dp_corr_pred = rec.get("dp_pred_corr_mbar", None)
     if isinstance(dp_geom, (int, float)):
-        ax.axvline(dp_geom, linestyle=":", linewidth=1.1, alpha=0.9, label=f"Predicted Δp (geom) = {dp_geom:.3g} mbar")
+        ax.axvline(dp_geom, linestyle=":", linewidth=1.1, alpha=0.9, label=f"Pred Δp (geom) {dp_geom:.3g} mbar")
     if isinstance(dp_corr_pred, (int, float)) and (dp_corr_pred != dp_geom):
-        ax.axvline(dp_corr_pred, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Predicted Δp (reconciled) = {dp_corr_pred:.3g} mbar")
+        ax.axvline(dp_corr_pred, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Pred Δp (reconciled) {dp_corr_pred:.3g} mbar")
     ax.set_title(title); ax.set_axisbelow(True); ax.grid(True, alpha=0.35)
     _shade_recommended_band(ax, outdir, s_all, label_prefix="Recommended")
     handles, labels = ax.get_legend_handles_labels()
@@ -1114,28 +1096,24 @@ def _fig_venturi_curve(outdir: Path) -> plt.Figure | None:
 
 
 def _profiles_page(outdir: Path) -> Optional[plt.Figure]:
-    import glob, os
-    prof_dir = Path(outdir) / "profiles"
-    files = sorted(glob.glob(str(prof_dir / "P*_profile.csv")))
+    import glob
+    files = sorted(glob.glob(str(Path(outdir) / "profiles" / "P*_profile.csv")))
     if not files:
         return None
     fig, axes = plt.subplots(2, 4, figsize=(10.5, 6.5), constrained_layout=True)
     axes = axes.ravel()
     for ax, fn in zip(axes, files[:8]):
         df = pd.read_csv(fn)
-        xi = pd.to_numeric(df.get("xi", pd.Series([])), errors="coerce")
-        qs_med = pd.to_numeric(df.get("q_s_median", pd.Series([])), errors="coerce")
-        qs_s = pd.to_numeric(df.get("q_s_smoothed", pd.Series([])), errors="coerce")
-        Aj = pd.to_numeric(df.get("Aj", pd.Series([])), errors="coerce")
-        lbl = Path(fn).stem.replace("_profile", "")
-        if xi.notna().any() and qs_med.notna().any():
-            ax.plot(xi, qs_med, linewidth=1.0, label="median q_s(ξ)")
-        if xi.notna().any() and qs_s.notna().any():
-            ax.plot(xi, qs_s, linewidth=1.0, linestyle="--", label="smoothed")
-        ax.set_title(lbl, fontsize=9)
+        xi = pd.to_numeric(df.get("xi"), errors="coerce")
+        qs0 = pd.to_numeric(df.get("q_s_median"), errors="coerce")
+        qss = pd.to_numeric(df.get("q_s_smoothed"), errors="coerce")
+        if xi.notna().any() and qs0.notna().any():
+            ax.plot(xi, qs0, linewidth=1.0, label="median q_s(ξ)")
+        if xi.notna().any() and qss.notna().any():
+            ax.plot(xi, qss, linewidth=1.0, linestyle="--", label="smoothed")
+        ax.set_title(Path(fn).stem.replace('_profile',''), fontsize=9)
         ax.set_xlabel("ξ"); ax.set_ylabel("q_s [Pa]")
-        ax.grid(True, alpha=0.2)
-        ax.legend(fontsize=7)
+        ax.grid(True, alpha=0.2); ax.legend(fontsize=7)
     return fig
 
 
