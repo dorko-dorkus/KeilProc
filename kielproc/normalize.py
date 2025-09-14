@@ -7,7 +7,11 @@ import numpy as np
 import pandas as pd
 
 
-def normalize(frames: Iterable[Tuple[str, pd.DataFrame]], baro_pa: float) -> tuple[pd.DataFrame, dict]:
+def normalize(
+    frames: Iterable[Tuple[str, pd.DataFrame]],
+    baro_pa: float,
+    outdir_path: Path | str | None = None,
+) -> tuple[pd.DataFrame, dict]:
     """Combine and normalize per-port sample data.
 
     Parameters
@@ -54,6 +58,41 @@ def normalize(frames: Iterable[Tuple[str, pd.DataFrame]], baro_pa: float) -> tup
         out_rows.append(row)
 
     out = pd.concat(out_rows, ignore_index=True) if out_rows else pd.DataFrame()
+
+    if outdir_path is not None and isinstance(outdir_path, (str, Path)):
+        outdir_path = Path(outdir_path)
+        outdir_path.mkdir(parents=True, exist_ok=True)
+
+        # Ensure canonical column names if present in source
+        rename = {
+            "VP_pa": "VP_pa",
+            "T_C": "T_C",
+            "static_gauge_pa": "static_gauge_pa",
+            "piccolo_mA": "piccolo_mA",
+            "Port": "Port",
+            "p_s_pa": "p_s_pa",
+        }
+        ts_cols = [c for c in rename if c in out.columns]
+        if ts_cols:
+            ts = out[ts_cols].rename(columns=rename).copy()
+            ts.to_csv(outdir_path / "normalized_timeseries.csv", index=False)
+
+            grp = ts.groupby("Port", as_index=False)
+            per_port = grp.agg({
+                "VP_pa": "mean",
+                "T_C": "mean",
+                "p_s_pa": "mean",
+            }).rename(columns={
+                "VP_pa": "VP_pa_mean",
+                "T_C": "T_C_mean",
+                "p_s_pa": "Static_abs_pa_mean",
+            })
+            if "piccolo_mA" in ts.columns:
+                per_port["piccolo_mA_mean"] = grp["piccolo_mA"].mean()["piccolo_mA"]
+            if "static_gauge_pa" in ts.columns and "Static_abs_pa_mean" not in per_port.columns:
+                # Preserve gauge info for completeness if abs not present
+                pass
+            per_port.to_csv(outdir_path / "per_port.csv", index=False)
 
     # Sanity check on plane static (useful to catch parsing off-by-header)
     p_med = float(np.nanmedian(pd.to_numeric(out["p_s_pa"], errors="coerce"))) if not out.empty else float("nan")

@@ -58,6 +58,9 @@ def test_run_all_produces_outputs(tmp_path):
     assert summary["baro_pa"] == 101_325.0
     assert summary["site_name"] == "SiteA"
     assert summary["K_uic"] == 33.5
+    # normalized timeseries always emitted
+    ts = Path(summary["normalized_timeseries_csv"])
+    assert ts.exists()
     # Venturi result files present and sane
     vr = Path(summary["venturi_result_json"])
     assert vr.exists()
@@ -124,3 +127,8 @@ def test_run_all_accepts_workbook(tmp_path):
     assert therm["source"] == "workbook"
     assert therm["value"] == 150.0
     assert therm["unit"] == "C"
+    ts = Path(summary["normalized_timeseries_csv"])
+    assert ts.exists()
+    per = pd.read_csv(Path(summary["per_port_csv"]))
+    assert "piccolo_mA_mean" in per.columns
+    assert abs(per["piccolo_mA_mean"].iloc[0] - 10.0) < 1e-6
