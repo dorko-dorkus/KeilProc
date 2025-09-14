@@ -583,11 +583,11 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         pass
 
     # ---------------- Piccolo current → DP (raw + corrected) ----------------
-    piccolo_fit = {}; df_ts = None
-    try:
-        ts_path = outdir / "normalized_timeseries.csv"
-        if ts_path.exists(): df_ts = pd.read_csv(ts_path)
-    except Exception: df_ts = None
+    piccolo_fit = {}
+    df_ts = None
+    ts_path = outdir / "normalized_timeseries.csv"
+    if ts_path.exists():
+        df_ts = pd.read_csv(ts_path)
 
     # Build predicted DP series from q_s (timeseries primary; per-port means fallback)
     dp_pred_mbar_series = None; I_series = None
@@ -613,42 +613,40 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         piccolo_fit = {"a_mbar_per_mA": a, "b_mbar": b, "lrv_mbar": lrv_mbar, "urv_mbar": urv_mbar, "n_points": int(np.isfinite(I_series).sum())}
     if not overlay_df.empty:
         use_col = "data_DP_mbar_corr" if "data_DP_mbar_corr" in overlay_df.columns else ("data_DP_mbar_raw" if "data_DP_mbar_raw" in overlay_df.columns else None)
-        if use_col: overlay_df["data_DP_mbar"] = overlay_df[use_col]
+        if use_col is not None:
+            overlay_df["data_DP_mbar"] = overlay_df[use_col]
         overlay_df.to_csv(outdir / "transmitter_lookup_data.csv", index=False)
         (outdir / "piccolo_cal.json").write_text(json.dumps(piccolo_fit or {}, indent=2))
 
-    # ---------------- Reconciliation & operating band (on corrected overlay if present) ----------------
-    reconcile = {}
-    try:
-        data_csv = outdir / "transmitter_lookup_data.csv"
-        if data_csv.exists():
-            df_overlay = pd.read_csv(data_csv)
-            col = "data_DP_mbar" if "data_DP_mbar" in df_overlay.columns else ("data_DP_mbar_corr" if "data_DP_mbar_corr" in df_overlay.columns else None)
-            if col:
-                dp = pd.to_numeric(df_overlay[col], errors="coerce").dropna().to_numpy()
-                if dp.size:
-                    p5, p50, p95 = np.percentile(dp, [5, 50, 95])
-                    reconcile = {
-                        "dp_overlay_p5_mbar": float(p5),
-                        "dp_overlay_p50_mbar": float(p50),
-                        "dp_overlay_p95_mbar": float(p95),
-                        "dp_pred_geom_mbar": float(((1.0 - beta**4) * q_t_mean) / 100.0) if (q_t_mean is not None and beta is not None) else None,
-                        "dp_pred_corr_mbar": float(C_f * ((1.0 - beta**4) * q_t_mean) / 100.0) if (q_t_mean is not None and beta is not None) else None,
-                        "dp_error_geom_mbar": None,
-                        "dp_error_corr_mbar": None,
-                        "dp_error_geom_pct_vs_p50": None,
-                        "dp_error_corr_pct_vs_p50": None,
-                        "C_f": C_f,
-                        "piccolo_fit": piccolo_fit,
-                    }
-                    if reconcile["dp_pred_geom_mbar"] is not None:
-                        reconcile["dp_error_geom_mbar"] = reconcile["dp_pred_geom_mbar"] - p50
-                        reconcile["dp_error_geom_pct_vs_p50"] = float(100.0 * reconcile["dp_error_geom_mbar"] / p50) if p50 else None
-                    if reconcile["dp_pred_corr_mbar"] is not None:
-                        reconcile["dp_error_corr_mbar"] = reconcile["dp_pred_corr_mbar"] - p50
-                        reconcile["dp_error_corr_pct_vs_p50"] = float(100.0 * reconcile["dp_error_corr_mbar"] / p50) if p50 else None
-    except Exception:
-        pass
+    # ---------------- Reconciliation (works with or without overlay) ----------------
+    have_geom = (q_t_mean is not None) and (beta is not None) and np.isfinite(beta)
+    dp_geom_mbar = float(((1.0 - beta**4) * q_t_mean) / 100.0) if have_geom else None
+    dp_corr_mbar = float(C_f * dp_geom_mbar) if (dp_geom_mbar is not None) else None
+    reconcile = {
+        "dp_overlay_p5_mbar": None, "dp_overlay_p50_mbar": None, "dp_overlay_p95_mbar": None,
+        "dp_pred_geom_mbar": float(dp_geom_mbar) if dp_geom_mbar is not None else None,
+        "dp_pred_corr_mbar": float(dp_corr_mbar) if dp_corr_mbar is not None else None,
+        "dp_error_geom_mbar": None, "dp_error_corr_mbar": None,
+        "dp_error_geom_pct_vs_p50": None, "dp_error_corr_pct_vs_p50": None,
+        "C_f": C_f, "piccolo_fit": piccolo_fit,
+    }
+    data_csv = outdir / "transmitter_lookup_data.csv"
+    if data_csv.exists():
+        df_overlay = pd.read_csv(data_csv)
+        col = "data_DP_mbar" if "data_DP_mbar" in df_overlay.columns else None
+        if col is not None:
+            dp = pd.to_numeric(df_overlay[col], errors="coerce").dropna().to_numpy()
+            if dp.size:
+                p5, p50, p95 = np.percentile(dp, [5, 50, 95])
+                reconcile["dp_overlay_p5_mbar"]  = float(p5)
+                reconcile["dp_overlay_p50_mbar"] = float(p50)
+                reconcile["dp_overlay_p95_mbar"] = float(p95)
+                if dp_geom_mbar is not None:
+                    reconcile["dp_error_geom_mbar"] = float(dp_geom_mbar - p50)
+                    reconcile["dp_error_geom_pct_vs_p50"] = float(100.0 * (dp_geom_mbar - p50) / p50) if p50 else None
+                if dp_corr_mbar is not None:
+                    reconcile["dp_error_corr_mbar"] = float(dp_corr_mbar - p50)
+                    reconcile["dp_error_corr_pct_vs_p50"] = float(100.0 * (dp_corr_mbar - p50) / p50) if p50 else None
 
     # Static-source labeling: derive from per_port "p_abs_source" if we can
     static_mode = mode
