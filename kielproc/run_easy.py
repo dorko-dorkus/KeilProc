@@ -626,6 +626,24 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     p5 = p50 = p95 = None
     C_f_star = None
     dp_corr_mbar = None
+    # --- predicted band from qs series (if any) ---
+    pred_band_geom = pred_band_corr = None
+    try:
+        # Prefer timeseries qs; fallback to per_port means if needed
+        qs_series = None
+        if df_ts is not None and "VP_pa" in df_ts.columns:
+            qs_series = pd.to_numeric(df_ts["VP_pa"], errors="coerce").to_numpy()
+        elif "q_s_pa" in per_port.columns:
+            qs_series = pd.to_numeric(per_port["q_s_pa"], errors="coerce").to_numpy()
+        if qs_series is not None:
+            qs_series = qs_series[np.isfinite(qs_series) & (qs_series > 0)]
+            if qs_series.size:
+                # DP_geom = (1-β^4) r^2 * qs / 100
+                k = (1.0 - beta**4) * (r**2) / 100.0
+                g5, g95 = np.percentile(k * qs_series, [5, 95])
+                pred_band_geom = [float(g5), float(g95)]
+    except Exception:
+        pass
     reconcile = {
         "dp_overlay_p5_mbar": None, "dp_overlay_p50_mbar": None, "dp_overlay_p95_mbar": None,
         "dp_pred_geom_mbar": dp_geom_mbar,
@@ -633,6 +651,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "dp_error_geom_mbar": None, "dp_error_corr_mbar": None,
         "dp_error_geom_pct_vs_p50": None, "dp_error_corr_pct_vs_p50": None,
         "C_f": C_f, "C_f_fit": None, "piccolo_fit": piccolo_fit,
+        "pred_band_geom_mbar": pred_band_geom,
+        "pred_band_corr_mbar": None,
     }
     data_csv = outdir / "transmitter_lookup_data.csv"
     if data_csv.exists():
@@ -652,6 +672,10 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                     reconcile["C_f_fit"] = float(C_f_star)
                     reconcile["dp_error_corr_mbar"] = float(dp_corr_mbar - p50)
                     reconcile["dp_error_corr_pct_vs_p50"] = float(100.0 * (dp_corr_mbar - p50) / p50) if p50 else None
+                # If we have a fitted C_f and a predicted geom band, also provide a reconciled band
+                if C_f_star is not None and pred_band_geom:
+                    reconcile["pred_band_corr_mbar"] = [float(C_f_star * pred_band_geom[0]),
+                                                        float(C_f_star * pred_band_geom[1])]
                 if dp_geom_mbar is not None:
                     reconcile["dp_error_geom_mbar"] = float(dp_geom_mbar - p50)
                     reconcile["dp_error_geom_pct_vs_p50"] = float(100.0 * (dp_geom_mbar - p50) / p50) if p50 else None
