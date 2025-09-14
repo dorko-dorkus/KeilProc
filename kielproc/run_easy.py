@@ -619,16 +619,17 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         (outdir / "piccolo_cal.json").write_text(json.dumps(piccolo_fit or {}, indent=2))
 
     # ---------------- Reconciliation (works with or without overlay) ----------------
-    have_geom = (q_t_mean is not None) and (beta is not None) and np.isfinite(beta)
-    dp_geom_mbar = float(((1.0 - beta**4) * q_t_mean) / 100.0) if have_geom else None
-    dp_corr_mbar = float(C_f * dp_geom_mbar) if (dp_geom_mbar is not None) else None
+    dp_geom_mbar = float(((1.0 - beta**4) * (r**2) * q_s_mean) / 100.0) if ((beta is not None) and np.isfinite(beta) and (r is not None) and np.isfinite(r) and (q_s_mean is not None) and np.isfinite(q_s_mean)) else None
+    p5 = p50 = p95 = None
+    C_f_star = None
+    dp_corr_mbar = None
     reconcile = {
         "dp_overlay_p5_mbar": None, "dp_overlay_p50_mbar": None, "dp_overlay_p95_mbar": None,
-        "dp_pred_geom_mbar": float(dp_geom_mbar) if dp_geom_mbar is not None else None,
-        "dp_pred_corr_mbar": float(dp_corr_mbar) if dp_corr_mbar is not None else None,
+        "dp_pred_geom_mbar": dp_geom_mbar,
+        "dp_pred_corr_mbar": None,
         "dp_error_geom_mbar": None, "dp_error_corr_mbar": None,
         "dp_error_geom_pct_vs_p50": None, "dp_error_corr_pct_vs_p50": None,
-        "C_f": C_f, "piccolo_fit": piccolo_fit,
+        "C_f": C_f, "C_f_fit": None, "piccolo_fit": piccolo_fit,
     }
     data_csv = outdir / "transmitter_lookup_data.csv"
     if data_csv.exists():
@@ -638,15 +639,19 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
             dp = pd.to_numeric(df_overlay[col], errors="coerce").dropna().to_numpy()
             if dp.size:
                 p5, p50, p95 = np.percentile(dp, [5, 50, 95])
-                reconcile["dp_overlay_p5_mbar"]  = float(p5)
+                reconcile["dp_overlay_p5_mbar"] = float(p5)
                 reconcile["dp_overlay_p50_mbar"] = float(p50)
                 reconcile["dp_overlay_p95_mbar"] = float(p95)
+                if dp_geom_mbar is not None and p50 is not None and dp_geom_mbar > 0:
+                    C_f_star = float(p50 / dp_geom_mbar)
+                    dp_corr_mbar = C_f_star * dp_geom_mbar
+                    reconcile["dp_pred_corr_mbar"] = float(dp_corr_mbar)
+                    reconcile["C_f_fit"] = float(C_f_star)
+                    reconcile["dp_error_corr_mbar"] = float(dp_corr_mbar - p50)
+                    reconcile["dp_error_corr_pct_vs_p50"] = float(100.0 * (dp_corr_mbar - p50) / p50) if p50 else None
                 if dp_geom_mbar is not None:
                     reconcile["dp_error_geom_mbar"] = float(dp_geom_mbar - p50)
                     reconcile["dp_error_geom_pct_vs_p50"] = float(100.0 * (dp_geom_mbar - p50) / p50) if p50 else None
-                if dp_corr_mbar is not None:
-                    reconcile["dp_error_corr_mbar"] = float(dp_corr_mbar - p50)
-                    reconcile["dp_error_corr_pct_vs_p50"] = float(100.0 * (dp_corr_mbar - p50) / p50) if p50 else None
 
     # Static-source labeling: derive from per_port "p_abs_source" if we can
     static_mode = mode
