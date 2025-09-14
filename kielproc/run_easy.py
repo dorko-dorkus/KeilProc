@@ -388,7 +388,18 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                     if zc in per_sample.columns:
                         zmap[pnum] = zc
                         break
-            qs_mean_by_port, profile_xi_meta = aggregate_by_xi(per_sample, qmap, z_cols_by_port=zmap)
+            qs_mean_by_port, xi_profile_df, profile_xi_meta = aggregate_by_xi(
+                per_sample, qmap, z_cols_by_port=zmap
+            )
+            # Save per-port ξ profiles for audit/calibration use
+            profiles_dir = outdir / "profiles"
+            profiles_dir.mkdir(exist_ok=True)
+            try:
+                for p in sorted(xi_profile_df["Port"].unique()):
+                    sub = xi_profile_df[xi_profile_df["Port"] == p].copy()
+                    sub.to_csv(profiles_dir / f"{p}_profile.csv", index=False)
+            except Exception:
+                pass
             if "Port" in per_port.columns:
                 for i in range(len(per_port)):
                     pnum = int(per_port["Port"].iloc[i])
@@ -578,9 +589,12 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     if (I_series is None or not np.isfinite(I_series).any()) and "piccolo_mA_mean" in per_port.columns:
         I_series = pd.to_numeric(per_port["piccolo_mA_mean"], errors="coerce").to_numpy()
         # use per-port expected DP from per-port q_s means
-        if "q_s_pa" in per_port.columns:
+        qs_col = "q_s_pa_mean" if "q_s_pa_mean" in per_port.columns else None
+        if qs_col is None and "q_s_pa" in per_port.columns:
+            qs_col = "q_s_pa"
+        if qs_col:
             dp_pred_series = build_pred_dp_series_from_qs(
-                pd.to_numeric(per_port["q_s_pa"], errors="coerce").to_numpy(),
+                pd.to_numeric(per_port[qs_col], errors="coerce").to_numpy(),
                 r=r,
                 beta=beta,
                 Cf=C_f,
