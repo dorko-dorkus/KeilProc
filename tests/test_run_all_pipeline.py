@@ -52,6 +52,9 @@ def test_run_all_produces_outputs(tmp_path):
     assert combined.exists()
     df_combined = pd.read_csv(combined)
     assert "is_reference" in df_combined.columns
+    # Predicted band from qs carried through summary
+    band = summary["reconcile"]["pred_band_geom_mbar"]
+    assert isinstance(band, list) and len(band) == 2
     overlay = Path(summary["flow_lookup"]["overlay_csv"])
     assert overlay.exists()
     assert Path(summary["flow_lookup"]["combined_csv"]).exists()
