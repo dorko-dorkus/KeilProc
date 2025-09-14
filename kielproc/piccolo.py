@@ -35,4 +35,5 @@ def build_pred_dp_from_qs_mbar(qs_pa: np.ndarray, r: Optional[float], beta: Opti
 
 
 def build_pred_dp_series_from_qs(qs_pa: np.ndarray, r: Optional[float], beta: Optional[float], Cf: float = 1.0) -> np.ndarray:
+    """Kept for backward compatibility; identical to build_pred_dp_from_qs_mbar."""
     return build_pred_dp_from_qs_mbar(qs_pa, r, beta, Cf)
