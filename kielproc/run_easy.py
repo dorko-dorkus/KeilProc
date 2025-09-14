@@ -26,7 +26,7 @@ from .tools.venturi_builder import build_venturi_curve
 from .tools.recalc import recompute_duct_result_with_rho
 from .profile_xi import aggregate_by_xi
 from .temp_select import pick_duct_temperature_K
-from .piccolo import current_to_dp_raw_mbar, fit_current_to_dp, build_pred_dp_series_from_qs
+from .piccolo import current_to_dp_raw_mbar, fit_current_to_dp, build_pred_dp_from_qs_mbar
 
 R_AIR = 287.05  # J/(kg*K)
 
@@ -391,15 +391,6 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
             qs_mean_by_port, xi_profile_df, profile_xi_meta = aggregate_by_xi(
                 per_sample, qmap, z_cols_by_port=zmap
             )
-            # Save per-port ξ profiles for audit/calibration use
-            profiles_dir = outdir / "profiles"
-            profiles_dir.mkdir(exist_ok=True)
-            try:
-                for p in sorted(xi_profile_df["Port"].unique()):
-                    sub = xi_profile_df[xi_profile_df["Port"] == p].copy()
-                    sub.to_csv(profiles_dir / f"{p}_profile.csv", index=False)
-            except Exception:
-                pass
             if "Port" in per_port.columns:
                 for i in range(len(per_port)):
                     pnum = int(per_port["Port"].iloc[i])
@@ -560,102 +551,81 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     # Optional correction factor plane→throat (loss/recovery). Default 1.0
     C_f = float(getattr(cfg, "plane_to_throat_coeff", 1.0))
 
-    dp_geom_mbar = None
-    dp_corr_mbar = None
-    if (q_t_mean is not None) and (beta is not None):
-        dp_geom_mbar = (1.0 - beta**4) * q_t_mean / 100.0
-        dp_corr_mbar = C_f * dp_geom_mbar
+    # ---------------- ξ profiles export (used for calibration & audit) ----------------
+    # Expect xi_profile_df with per-port rows: ['Port','xi','Aj','q_s_median','q_s_smoothed',...]
+    profiles_dir = outdir / "profiles"; profiles_dir.mkdir(exist_ok=True)
+    try:
+        for p in sorted(xi_profile_df["Port"].unique()):
+            sub = xi_profile_df[xi_profile_df["Port"] == p].copy()
+            sub.to_csv(profiles_dir / f"{p}_profile.csv", index=False)
+    except Exception:
+        pass
 
-    # ---------------- Piccolo current → DP calibration ----------------
-    # Try to assemble a timeseries of (I_mA, q_s) to fit I→DP using predicted DP from q_s
-    piccolo_fit: Dict[str, Any] = {}
-    df_ts: pd.DataFrame | None = None
+    # ---------------- Piccolo current → DP (raw + corrected) ----------------
+    piccolo_fit = {}; df_ts = None
     try:
         ts_path = outdir / "normalized_timeseries.csv"
-        if ts_path.exists():
-            df_ts = pd.read_csv(ts_path)
-    except Exception:
-        df_ts = None
-    # Build predicted DP series from q_s (Pa)
-    dp_pred_series = None
+        if ts_path.exists(): df_ts = pd.read_csv(ts_path)
+    except Exception: df_ts = None
+
+    # Build predicted DP series from q_s (timeseries primary; per-port means fallback)
+    dp_pred_mbar_series = None; I_series = None
     if df_ts is not None and "VP_pa" in df_ts.columns:
-        qs = pd.to_numeric(df_ts["VP_pa"], errors="coerce")
-        dp_pred_series = build_pred_dp_series_from_qs(qs, r=r, beta=beta, Cf=C_f)
-    # Piccolo current vector
-    I_series = None
+        dp_pred_mbar_series = build_pred_dp_from_qs_mbar(pd.to_numeric(df_ts["VP_pa"], errors="coerce"), r=r, beta=beta, Cf=C_f)
     if df_ts is not None and "piccolo_mA" in df_ts.columns:
         I_series = pd.to_numeric(df_ts["piccolo_mA"], errors="coerce").to_numpy()
-    # Fallback per-port medians if no timeseries
     if (I_series is None or not np.isfinite(I_series).any()) and "piccolo_mA_mean" in per_port.columns:
         I_series = pd.to_numeric(per_port["piccolo_mA_mean"], errors="coerce").to_numpy()
-        # use per-port expected DP from per-port q_s means
-        qs_col = "q_s_pa_mean" if "q_s_pa_mean" in per_port.columns else None
-        if qs_col is None and "q_s_pa" in per_port.columns:
-            qs_col = "q_s_pa"
-        if qs_col:
-            dp_pred_series = build_pred_dp_series_from_qs(
-                pd.to_numeric(per_port[qs_col], errors="coerce").to_numpy(),
-                r=r,
-                beta=beta,
-                Cf=C_f,
-            )
-    # Compute raw DP from config LRV/URV or span
+        if "q_s_pa" in per_port.columns:
+            dp_pred_mbar_series = build_pred_dp_from_qs_mbar(pd.to_numeric(per_port["q_s_pa"], errors="coerce").to_numpy(), r=r, beta=beta, Cf=C_f)
+
     lrv_mbar = float(getattr(cfg, "piccolo_lrv_mbar", 0.0))
     urv_mbar = float(getattr(cfg, "piccolo_urv_mbar", getattr(cfg, "transmitter_range_mbar", 8.5)))
-    # Build overlay dataframe (raw first)
-    overlay_rows = []
+    overlay_df = pd.DataFrame()
     if I_series is not None:
-        dp_raw = current_to_dp_raw_mbar(I_series, lrv_mbar, urv_mbar)
-        overlay_rows.append(pd.DataFrame({"data_DP_mbar_raw": dp_raw}))
-    if dp_pred_series is not None:
-        overlay_rows.append(pd.DataFrame({"dp_pred_mbar_from_qs": dp_pred_series}))
-    overlay_df = pd.concat(overlay_rows, axis=1) if overlay_rows else pd.DataFrame()
-    # Fit corrected mapping if we have both I and predicted DP
-    if (I_series is not None) and (dp_pred_series is not None):
-        a, b = fit_current_to_dp(I_series, dp_pred_series)
-        dp_corr = a * I_series + b
-        overlay_df["data_DP_mbar_corr"] = dp_corr
-        piccolo_fit = {
-            "a_mbar_per_mA": a,
-            "b_mbar": b,
-            "lrv_mbar": lrv_mbar,
-            "urv_mbar": urv_mbar,
-            "n_points": int(np.isfinite(I_series).sum()),
-        }
-    # Decide which DP to use for transmitter lookups: prefer corrected, then raw, else existing
+        overlay_df["data_DP_mbar_raw"] = current_to_dp_raw_mbar(I_series, lrv_mbar, urv_mbar)
+    if dp_pred_mbar_series is not None:
+        overlay_df["dp_pred_mbar_from_qs"] = np.asarray(dp_pred_mbar_series)
+    if (I_series is not None) and (dp_pred_mbar_series is not None):
+        a, b = fit_current_to_dp(I_series, dp_pred_mbar_series)
+        overlay_df["data_DP_mbar_corr"] = a * I_series + b
+        piccolo_fit = {"a_mbar_per_mA": a, "b_mbar": b, "lrv_mbar": lrv_mbar, "urv_mbar": urv_mbar, "n_points": int(np.isfinite(I_series).sum())}
     if not overlay_df.empty:
-        use_col = "data_DP_mbar_corr" if "data_DP_mbar_corr" in overlay_df.columns else "data_DP_mbar_raw"
-        overlay_df["data_DP_mbar"] = overlay_df[use_col]
+        use_col = "data_DP_mbar_corr" if "data_DP_mbar_corr" in overlay_df.columns else ("data_DP_mbar_raw" if "data_DP_mbar_raw" in overlay_df.columns else None)
+        if use_col: overlay_df["data_DP_mbar"] = overlay_df[use_col]
         overlay_df.to_csv(outdir / "transmitter_lookup_data.csv", index=False)
         (outdir / "piccolo_cal.json").write_text(json.dumps(piccolo_fit or {}, indent=2))
 
-    # ---------------- Reconciliation and operating band ----------------
-    reconcile: Dict[str, Any] = {}
+    # ---------------- Reconciliation & operating band (on corrected overlay if present) ----------------
+    reconcile = {}
     try:
         data_csv = outdir / "transmitter_lookup_data.csv"
         if data_csv.exists():
             df_overlay = pd.read_csv(data_csv)
-            if "data_DP_mbar" in df_overlay.columns:
-                dp = pd.to_numeric(df_overlay["data_DP_mbar"], errors="coerce").dropna().to_numpy()
+            col = "data_DP_mbar" if "data_DP_mbar" in df_overlay.columns else ("data_DP_mbar_corr" if "data_DP_mbar_corr" in df_overlay.columns else None)
+            if col:
+                dp = pd.to_numeric(df_overlay[col], errors="coerce").dropna().to_numpy()
                 if dp.size:
                     p5, p50, p95 = np.percentile(dp, [5, 50, 95])
                     reconcile = {
                         "dp_overlay_p5_mbar": float(p5),
                         "dp_overlay_p50_mbar": float(p50),
                         "dp_overlay_p95_mbar": float(p95),
-                        "dp_pred_geom_mbar": float(dp_geom_mbar) if dp_geom_mbar is not None else None,
-                        "dp_pred_corr_mbar": float(dp_corr_mbar) if dp_corr_mbar is not None else None,
-                        "dp_error_geom_mbar": float(dp_geom_mbar - p50) if dp_geom_mbar is not None else None,
-                        "dp_error_corr_mbar": float(dp_corr_mbar - p50) if dp_corr_mbar is not None else None,
-                        "dp_error_geom_pct_vs_p50": float(100.0 * (dp_geom_mbar - p50) / p50)
-                        if (dp_geom_mbar is not None and p50)
-                        else None,
-                        "dp_error_corr_pct_vs_p50": float(100.0 * (dp_corr_mbar - p50) / p50)
-                        if (dp_corr_mbar is not None and p50)
-                        else None,
+                        "dp_pred_geom_mbar": float(((1.0 - beta**4) * q_t_mean) / 100.0) if (q_t_mean is not None and beta is not None) else None,
+                        "dp_pred_corr_mbar": float(C_f * ((1.0 - beta**4) * q_t_mean) / 100.0) if (q_t_mean is not None and beta is not None) else None,
+                        "dp_error_geom_mbar": None,
+                        "dp_error_corr_mbar": None,
+                        "dp_error_geom_pct_vs_p50": None,
+                        "dp_error_corr_pct_vs_p50": None,
                         "C_f": C_f,
                         "piccolo_fit": piccolo_fit,
                     }
+                    if reconcile["dp_pred_geom_mbar"] is not None:
+                        reconcile["dp_error_geom_mbar"] = reconcile["dp_pred_geom_mbar"] - p50
+                        reconcile["dp_error_geom_pct_vs_p50"] = float(100.0 * reconcile["dp_error_geom_mbar"] / p50) if p50 else None
+                    if reconcile["dp_pred_corr_mbar"] is not None:
+                        reconcile["dp_error_corr_mbar"] = reconcile["dp_pred_corr_mbar"] - p50
+                        reconcile["dp_error_corr_pct_vs_p50"] = float(100.0 * reconcile["dp_error_corr_mbar"] / p50) if p50 else None
     except Exception:
         pass
 
