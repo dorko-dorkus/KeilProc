@@ -63,36 +63,45 @@ def normalize(
         outdir_path = Path(outdir_path)
         outdir_path.mkdir(parents=True, exist_ok=True)
 
-        # Ensure canonical column names if present in source
-        rename = {
-            "VP_pa": "VP_pa",
-            "T_C": "T_C",
-            "static_gauge_pa": "static_gauge_pa",
-            "piccolo_mA": "piccolo_mA",
-            "Port": "Port",
-            "p_s_pa": "p_s_pa",
-        }
-        ts_cols = [c for c in rename if c in out.columns]
-        if ts_cols:
-            ts = out[ts_cols].rename(columns=rename).copy()
-            ts.to_csv(outdir_path / "normalized_timeseries.csv", index=False)
+        # after building per-sample ts_all
+        ts_all = out
+        cols = {"p_s_pa": "p_s_pa"}
+        for c in ts_all.columns:
+            lc = c.lower()
+            if "vp" in lc and "pa" in lc:
+                cols["VP_pa"] = c
+            if "piccolo" in lc and ("ma" in lc or "current" in lc):
+                cols["piccolo_mA"] = c
+            if "piccolo" in lc and "mv" in lc:
+                cols["piccolo_mV"] = c
+            if lc in ("t_c", "temp_c", "temperature_c"):
+                cols["T_C"] = c
+            if "static" in lc and ("gauge" in lc or "sp_g" in lc):
+                cols["static_gauge_pa"] = c
+            if lc == "port":
+                cols["Port"] = c
+        ts_all = ts_all[[v for v in cols.values()]].rename(columns={v: k for k, v in cols.items()})
+        # optional mV→mA
+        if "piccolo_mV" in ts_all.columns and "piccolo_mA" not in ts_all.columns:
+            R = float(getattr(globals().get("cfg", object()), "piccolo_shunt_ohm", 250.0))
+            ts_all["piccolo_mA"] = ts_all["piccolo_mV"] / R
+        ts_all.to_csv(outdir_path / "normalized_timeseries.csv", index=False)
 
-            grp = ts.groupby("Port", as_index=False)
-            per_port = grp.agg({
-                "VP_pa": "mean",
-                "T_C": "mean",
-                "p_s_pa": "mean",
-            }).rename(columns={
-                "VP_pa": "VP_pa_mean",
-                "T_C": "T_C_mean",
-                "p_s_pa": "Static_abs_pa_mean",
-            })
-            if "piccolo_mA" in ts.columns:
-                per_port["piccolo_mA_mean"] = grp["piccolo_mA"].mean()["piccolo_mA"]
-            if "static_gauge_pa" in ts.columns and "Static_abs_pa_mean" not in per_port.columns:
-                # Preserve gauge info for completeness if abs not present
-                pass
-            per_port.to_csv(outdir_path / "per_port.csv", index=False)
+        per_port = ts_all.groupby("Port", as_index=False).agg({
+            "VP_pa": "mean",
+            "T_C": "mean",
+            "p_s_pa": "mean",
+        }).rename(columns={
+            "VP_pa": "VP_pa_mean",
+            "T_C": "T_C_mean",
+            "p_s_pa": "Static_abs_pa_mean",
+        })
+        if "piccolo_mA" in ts_all.columns:
+            per_port["piccolo_mA_mean"] = ts_all.groupby("Port")["piccolo_mA"].mean().to_numpy()
+        if "static_gauge_pa" in ts_all.columns and "Static_abs_pa_mean" not in per_port.columns:
+            # Preserve gauge info for completeness if abs not present
+            pass
+        per_port.to_csv(outdir_path / "per_port.csv", index=False)
 
     # Sanity check on plane static (useful to catch parsing off-by-header)
     p_med = float(np.nanmedian(pd.to_numeric(out["p_s_pa"], errors="coerce"))) if not out.empty else float("nan")
