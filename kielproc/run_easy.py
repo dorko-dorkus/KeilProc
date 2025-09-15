@@ -811,6 +811,22 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         summary["delta_p_vent_est_pa"] = float(
             (1.0 - beta**4) * summary["q_t_pa_mean"]
         )
+    q_s_mean = summary.get("q_s_pa_mean_Aj") or summary.get("q_s_pa_mean")
+    dp_geom_mbar = (
+        float(((1.0 - beta**4) * (r ** 2) * q_s_mean) / 100.0)
+        if (
+            beta is not None
+            and np.isfinite(beta)
+            and r is not None
+            and np.isfinite(r)
+            and q_s_mean is not None
+            and np.isfinite(q_s_mean)
+        )
+        else None
+    )
+    summary["dp_pred_geom_mbar"] = dp_geom_mbar
+    if isinstance(summary.get("reconcile"), dict):
+        summary["reconcile"]["dp_pred_geom_mbar"] = dp_geom_mbar
     summary["plane_qs_weighting"] = weighting_mode
     summary.setdefault("profile_xi", {})["meta"] = profile_xi_meta or {}
     summary["qc"] = qc_info
