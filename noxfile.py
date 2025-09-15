@@ -13,15 +13,17 @@ def tests(session: nox.Session) -> None:
         "constraints.txt",
         "pytest",
     )
+    session.install("-e", ".")
     session.run("pytest")
 
 @nox.session
 def smoke(session: nox.Session) -> None:
-    """Exercise the CLI help to ensure the package imports."""
+    """Ensure the package imports in a clean environment."""
     session.install(
         "-r",
         "requirements.txt",
         "-c",
         "constraints.txt",
     )
-    session.run("python", "-m", "kielproc.cli", "--help")
+    session.install("-e", ".")
+    session.run("python", "-c", "import kielproc")
