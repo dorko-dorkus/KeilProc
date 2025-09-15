@@ -92,25 +92,26 @@ def normalize(
         if "piccolo_mV" in ts.columns and "piccolo_mA" not in ts.columns:
             R = float(getattr(globals().get("cfg", object()), "piccolo_shunt_ohm", 250.0))
             ts["piccolo_mA"] = ts["piccolo_mV"] / R
-        #
-        # Ensure we have a station index Xi in [0,1]: if absent, synthesize by
-        # normalized rank over time/sample order *within each port*.
-        #
+        # Ensure a station index Xi∈[0,1] exists (synthesize by within-port order if absent)
         if "Xi" not in ts.columns:
-            # best effort ordering key: if original ts_all had a time-like column, use it
-            time_col = None
+            # Use row order or first time-like column for ordering
+            order = np.arange(len(ts))
             for cand in ts_all.columns:
-                if re.search(r'(?i)time|timestamp|sample', str(cand)):
-                    time_col = cand
+                if re.search(r"(?i)time|timestamp|sample", str(cand)):
+                    order = (
+                        pd.to_numeric(ts_all[cand], errors="coerce")
+                        .fillna(method="ffill")
+                        .fillna(method="bfill")
+                        .to_numpy()
+                    )
                     break
-            ts["_order_key"] = pd.to_numeric(ts_all.get(time_col, pd.Series(range(len(ts_all)))), errors="coerce")
-            ts["_order_key"] = ts["_order_key"].fillna(method="ffill").fillna(method="bfill")
             ts["Xi"] = (
-                ts.groupby("Port")["_order_key"]
+                pd.Series(order)
+                .groupby(ts["Port"])
                 .rank(method="first", pct=True)
-                .clip(0.0, 1.0)
+                .clip(0, 1)
+                .to_numpy()
             )
-            ts.drop(columns=["_order_key"], errors="ignore", inplace=True)
 
         ts.to_csv(outdir_path / "normalized_timeseries.csv", index=False)
 

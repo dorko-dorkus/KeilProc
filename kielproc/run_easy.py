@@ -269,6 +269,15 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     (outdir / "normalize_meta.json").write_text(json.dumps(res.get("normalize_meta", {}), indent=2))
     # ---------------- Per-port profiles & Aj-weighted plane q_s ----------------
     prof_meta = build_profiles(outdir, cfg)
+    # Record weighting mode and Aj/equal means for audit
+    try:
+        s = json.loads((outdir / "summary.json").read_text())
+    except Exception:
+        s = {}
+    s["plane_qs_weighting"] = prof_meta.get("weighting")
+    s["q_s_pa_mean_ports_equal"] = prof_meta.get("q_s_pa_mean_ports_equal")
+    s["q_s_pa_mean_Aj"] = prof_meta.get("q_s_pa_mean_Aj")
+    (outdir / "summary.json").write_text(json.dumps(s, indent=2))
     piccolo_overlay_csv = None
     overlay_expected = False
     if input_mode == "legacy_workbook":
