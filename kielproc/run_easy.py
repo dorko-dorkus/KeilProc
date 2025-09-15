@@ -26,6 +26,7 @@ from .tools.recalc import recompute_duct_result_with_rho
 from .profile_xi import aggregate_by_xi
 from .temp_select import pick_duct_temperature_K
 from .piccolo import current_to_dp_raw_mbar, fit_current_to_dp, build_pred_dp_from_qs_mbar
+from .profiles import build_profiles
 
 R_AIR = 287.05  # J/(kg*K)
 
@@ -266,6 +267,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         (outdir / "normalized_timeseries.csv").write_text("")
     (outdir / "duct_result.json").write_text(json.dumps(res.get("duct", {}), indent=2))
     (outdir / "normalize_meta.json").write_text(json.dumps(res.get("normalize_meta", {}), indent=2))
+    # ---------------- Per-port profiles & Aj-weighted plane q_s ----------------
+    prof_meta = build_profiles(outdir, cfg)
     piccolo_overlay_csv = None
     overlay_expected = False
     if input_mode == "legacy_workbook":
@@ -738,6 +741,9 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         "v_bar_m_s": v_bar_final,
         "Q_m3_s": Q_final,
         "m_dot_kg_s": m_dot_final,
+        "plane_qs_weighting": prof_meta.get("weighting"),
+        "q_s_pa_mean_ports_equal": prof_meta.get("q_s_pa_mean_ports_equal"),
+        "q_s_pa_mean_Aj": prof_meta.get("q_s_pa_mean_Aj"),
         "reconcile": reconcile,
         # audit / repro metadata
         "inputs_manifest": input_manifest,
