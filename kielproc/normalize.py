@@ -5,6 +5,7 @@ from typing import Iterable, Tuple
 
 import numpy as np
 import pandas as pd
+import re
 
 
 def normalize(
@@ -65,29 +66,55 @@ def normalize(
 
         # after building per-sample ts_all
         ts_all = out
+        # Robust column discovery (handles label variants and mV→mA, plus Xi/Aj if present)
         cols = {"p_s_pa": "p_s_pa"}
         for c in ts_all.columns:
             lc = c.lower()
-            if "vp" in lc and "pa" in lc:
+            if ("vp" in lc) and ("pa" in lc):
                 cols["VP_pa"] = c
-            if "piccolo" in lc and ("ma" in lc or "current" in lc):
+            if ("piccolo" in lc) and ("ma" in lc or "current" in lc):
                 cols["piccolo_mA"] = c
-            if "piccolo" in lc and "mv" in lc:
+            if ("piccolo" in lc) and ("mv" in lc):
                 cols["piccolo_mV"] = c
             if lc in ("t_c", "temp_c", "temperature_c"):
                 cols["T_C"] = c
-            if "static" in lc and ("gauge" in lc or "sp_g" in lc):
+            if ("static" in lc) and (("gauge" in lc) or ("sp_g" in lc) or ("g" == lc[-1:])):
                 cols["static_gauge_pa"] = c
             if lc == "port":
                 cols["Port"] = c
-        ts_all = ts_all[[v for v in cols.values()]].rename(columns={v: k for k, v in cols.items()})
-        # optional mV→mA
-        if "piccolo_mV" in ts_all.columns and "piccolo_mA" not in ts_all.columns:
+            # optional station index / area weight from legacy sheets (if parser exposed them)
+            if re.search(r'(^|\b)(xi|ξ|station(_?index)?|grid(_?index)?)($|\b)', lc):
+                cols["Xi"] = c
+            if re.search(r'(^|\b)(aj|a_j|area_?weight)(|\b)', lc):
+                cols["Aj"] = c
+        ts = ts_all[[v for v in cols.values()]].rename(columns={v: k for k, v in cols.items()})
+        # Convert mV→mA if needed (default 250 Ω)
+        if "piccolo_mV" in ts.columns and "piccolo_mA" not in ts.columns:
             R = float(getattr(globals().get("cfg", object()), "piccolo_shunt_ohm", 250.0))
-            ts_all["piccolo_mA"] = ts_all["piccolo_mV"] / R
-        ts_all.to_csv(outdir_path / "normalized_timeseries.csv", index=False)
+            ts["piccolo_mA"] = ts["piccolo_mV"] / R
+        #
+        # Ensure we have a station index Xi in [0,1]: if absent, synthesize by
+        # normalized rank over time/sample order *within each port*.
+        #
+        if "Xi" not in ts.columns:
+            # best effort ordering key: if original ts_all had a time-like column, use it
+            time_col = None
+            for cand in ts_all.columns:
+                if re.search(r'(?i)time|timestamp|sample', str(cand)):
+                    time_col = cand
+                    break
+            ts["_order_key"] = pd.to_numeric(ts_all.get(time_col, pd.Series(range(len(ts_all)))), errors="coerce")
+            ts["_order_key"] = ts["_order_key"].fillna(method="ffill").fillna(method="bfill")
+            ts["Xi"] = (
+                ts.groupby("Port")["_order_key"]
+                .rank(method="first", pct=True)
+                .clip(0.0, 1.0)
+            )
+            ts.drop(columns=["_order_key"], errors="ignore", inplace=True)
 
-        per_port = ts_all.groupby("Port", as_index=False).agg({
+        ts.to_csv(outdir_path / "normalized_timeseries.csv", index=False)
+
+        per_port = ts.groupby("Port", as_index=False).agg({
             "VP_pa": "mean",
             "T_C": "mean",
             "p_s_pa": "mean",
@@ -96,9 +123,13 @@ def normalize(
             "T_C": "T_C_mean",
             "p_s_pa": "Static_abs_pa_mean",
         })
-        if "piccolo_mA" in ts_all.columns:
-            per_port["piccolo_mA_mean"] = ts_all.groupby("Port")["piccolo_mA"].mean().to_numpy()
-        if "static_gauge_pa" in ts_all.columns and "Static_abs_pa_mean" not in per_port.columns:
+        if "piccolo_mA" in ts.columns:
+            per_port["piccolo_mA_mean"] = ts.groupby("Port")["piccolo_mA"].mean().to_numpy()
+        # For visibility, if Aj was present on samples, compute a per-port Aj sum (diagnostic only)
+        if "Aj" in ts.columns:
+            s = ts.groupby("Port")["Aj"].sum().rename("Aj_sum")
+            per_port = per_port.merge(s, on="Port", how="left")
+        if "static_gauge_pa" in ts.columns and "Static_abs_pa_mean" not in per_port.columns:
             # Preserve gauge info for completeness if abs not present
             pass
         per_port.to_csv(outdir_path / "per_port.csv", index=False)
