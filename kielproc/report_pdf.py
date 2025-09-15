@@ -947,11 +947,20 @@ def _fig_flow_reference_with_overlay(outdir: Path) -> plt.Figure | None:
         dp_corr = pd.to_numeric(dd.get("data_DP_mbar_corr", pd.Series([])), errors="coerce").dropna().to_numpy()
         if dp_corr.size == 0 and "data_DP_mbar" in dd.columns:
             dp_corr = pd.to_numeric(dd["data_DP_mbar"], errors="coerce").dropna().to_numpy()
-        # overlay scatter (RAW is the primary truth; corrected shown faint for reference)
+        # overlay scatter:
+        #   - RAW is ground truth from transmitter scaling
+        #   - CORR is model(regressed) × C_f_fit (should align with RAW if fitted)
         if dp_raw.size:
             ax.scatter(dp_raw, _uic(dp_raw), s=9, alpha=0.85, marker="o", label="overlay (raw)")
         if dp_corr.size:
-            ax.scatter(dp_corr, _uic(dp_corr), s=6, alpha=0.30, marker=".", label="overlay (regressed)")
+            ax.scatter(
+                dp_corr,
+                _uic(dp_corr),
+                s=6,
+                alpha=0.35,
+                marker=".",
+                label="model (regressed × C_f)",
+            )
 
     rec = (s_all or {}).get("reconcile", {}) or {}
     dp_geom = rec.get("dp_pred_geom_mbar", None)
@@ -1021,11 +1030,21 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
             return np.full_like(np.asarray(dp, float), np.nan)
         return float(K) * np.sqrt(np.clip(np.asarray(dp, float), 0.0, None))
 
-    # overlay scatter (RAW is the primary truth; corrected shown faint for reference)
+    # overlay scatter:
+    #   - RAW is ground truth from transmitter scaling
+    #   - CORR is model(regressed) × C_f_fit (should align with RAW if fitted)
     if dp_raw.size:
         ax.scatter(dp_raw, _uic(dp_raw), s=20, alpha=0.85, marker="o", label="overlay (raw)", zorder=5)
     if dp_corr.size:
-        ax.scatter(dp_corr, _uic(dp_corr), s=20, alpha=0.30, marker=".", label="overlay (regressed)", zorder=5)
+        ax.scatter(
+            dp_corr,
+            _uic(dp_corr),
+            s=20,
+            alpha=0.35,
+            marker=".",
+            label="model (regressed × C_f)",
+            zorder=5,
+        )
 
     ax.set_xlim(lo, hi)
     ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
