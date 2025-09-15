@@ -632,17 +632,47 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     if dp_pred_mbar_series is not None:
         overlay_df["dp_pred_mbar_from_qs"] = np.asarray(dp_pred_mbar_series)
     if I_series is not None:
-        # Optional regression for inspection only; DO NOT replace the overlay
+        # Regression to geom prediction; keep both geom model and Cf-reconciled model
         if "dp_pred_mbar_from_qs" in overlay_df.columns:
             a, b = fit_current_to_dp(I_series, overlay_df["dp_pred_mbar_from_qs"].to_numpy())
-            overlay_df["data_DP_mbar_corr"] = a * I_series + b
-            piccolo_fit = {
-                "a_mbar_per_mA": float(a),
-                "b_mbar": float(b),
-                "lrv_mbar": lrv_mbar,
-                "urv_mbar": urv_mbar,
-                "n_points": int(np.isfinite(I_series).sum()),
-            }
+            model_geom = a * I_series + b
+            overlay_df["data_DP_mbar_model_geom"] = model_geom
+            # provisional Cf from RAW vs geom series
+            m = (
+                np.isfinite(model_geom)
+                & np.isfinite(overlay_df["dp_pred_mbar_from_qs"])
+                & (overlay_df["dp_pred_mbar_from_qs"] > 0)
+            )
+            Cf_prelim = (
+                float(
+                    np.median(
+                        overlay_df.loc[m, "data_DP_mbar_raw"]
+                        / overlay_df.loc[m, "dp_pred_mbar_from_qs"]
+                    )
+                )
+                if m.any()
+                else np.nan
+            )
+            if np.isfinite(Cf_prelim) and (0.5 <= Cf_prelim <= 20.0):
+                overlay_df["data_DP_mbar_corr"] = Cf_prelim * model_geom
+                piccolo_fit = {
+                    "a_mbar_per_mA": float(a),
+                    "b_mbar": float(b),
+                    "lrv_mbar": lrv_mbar,
+                    "urv_mbar": urv_mbar,
+                    "n_points": int(np.isfinite(I_series).sum()),
+                    "C_f_fit_prelim": float(Cf_prelim),
+                }
+            else:
+                # fall back: keep a tagged geom-only column so plots don't mislead
+                overlay_df["data_DP_mbar_corr"] = model_geom
+                piccolo_fit = {
+                    "a_mbar_per_mA": float(a),
+                    "b_mbar": float(b),
+                    "lrv_mbar": lrv_mbar,
+                    "urv_mbar": urv_mbar,
+                    "n_points": int(np.isfinite(I_series).sum()),
+                }
     if not overlay_df.empty:
         overlay_df.to_csv(outdir / "transmitter_lookup_data.csv", index=False)
         (outdir / "piccolo_cal.json").write_text(json.dumps(piccolo_fit or {}, indent=2))
@@ -692,7 +722,7 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 reconcile["dp_overlay_p5_mbar"] = float(p5)
                 reconcile["dp_overlay_p50_mbar"] = float(p50)
                 reconcile["dp_overlay_p95_mbar"] = float(p95)
-        # Fit Cf from RAW overlay vs predicted series
+        # Fit Cf from RAW overlay vs predicted series (robust median ratio)
         if {"data_DP_mbar_raw", "dp_pred_mbar_from_qs"}.issubset(df_overlay.columns):
             xv = pd.to_numeric(df_overlay["dp_pred_mbar_from_qs"], errors="coerce").to_numpy()
             yv = pd.to_numeric(df_overlay["data_DP_mbar_raw"], errors="coerce").to_numpy()
@@ -701,7 +731,10 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
                 ratios = (yv[m] / xv[m])
                 ratios = ratios[np.isfinite(ratios) & (ratios > 0)]
                 if ratios.size:
-                    C_f_star = float(np.median(ratios))
+                    # IQR-trimmed median for stability
+                    lo, hi = np.percentile(ratios, [25, 75])
+                    sel = (ratios >= lo) & (ratios <= hi)
+                    C_f_star = float(np.median(ratios[sel])) if sel.any() else float(np.median(ratios))
                     # Guard rail: ignore absurd fits
                     if 0.5 <= C_f_star <= 20.0 and (dp_geom_mbar is not None):
                         dp_corr_mbar = C_f_star * dp_geom_mbar
