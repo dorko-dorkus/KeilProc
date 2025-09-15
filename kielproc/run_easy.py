@@ -618,6 +618,8 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     overlay_df = pd.DataFrame()
     if I_series is not None:
         overlay_df["data_DP_mbar_raw"] = current_to_dp_raw_mbar(I_series, lrv_mbar, urv_mbar)
+        # Canonical overlay column expected by downstream reports/plots
+        overlay_df["data_DP_mbar"] = overlay_df["data_DP_mbar_raw"]
     if dp_pred_mbar_series is not None:
         overlay_df["dp_pred_mbar_from_qs"] = np.asarray(dp_pred_mbar_series)
     if I_series is not None:
