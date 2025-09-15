@@ -758,6 +758,43 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
         },
         "setpoints": sp,
     }
+    # If station profiles with Aj exist, compute Aj-weighted plane mean q_s; else fallback
+    profiles_dir = outdir / "profiles"
+    candidate = sorted(profiles_dir.glob("Port*_profile.csv"))
+    if candidate:
+        parts = []
+        for f in candidate:
+            try:
+                dfp = pd.read_csv(f)
+            except Exception:
+                continue
+            if {"Aj", "q_s_pa"}.issubset(dfp.columns):
+                Aj = pd.to_numeric(dfp["Aj"], errors="coerce")
+                qs = pd.to_numeric(dfp["q_s_pa"], errors="coerce")
+                denom = Aj.sum()
+                if denom and np.isfinite(denom):
+                    parts.append(float((Aj * qs).sum() / denom))
+        if parts:
+            q_s_pa_mean = float(np.mean(parts))
+            weighting_mode = "Aj"
+        else:
+            q_s_pa_mean = float(np.nanmean(pd.to_numeric(per_port["q_s_pa"], errors="coerce")))
+            weighting_mode = "ports_equal"
+    else:
+        q_s_pa_mean = float(np.nanmean(pd.to_numeric(per_port["q_s_pa"], errors="coerce")))
+        weighting_mode = "ports_equal"
+    summary["q_s_pa_mean"] = q_s_pa_mean
+    if (r is not None) and np.isfinite(r):
+        summary["q_t_pa_mean"] = float((r ** 2) * q_s_pa_mean)
+    if (
+        beta is not None
+        and np.isfinite(beta)
+        and summary.get("q_t_pa_mean") is not None
+    ):
+        summary["delta_p_vent_est_pa"] = float(
+            (1.0 - beta**4) * summary["q_t_pa_mean"]
+        )
+    summary["plane_qs_weighting"] = weighting_mode
     summary.setdefault("profile_xi", {})["meta"] = profile_xi_meta or {}
     summary["qc"] = qc_info
     # capture flow lookup meta paths for audit
@@ -772,8 +809,6 @@ def run_all(cfg: RunConfig) -> Dict[str, Any]:
     # Also expose K for any legacy readers
     if cal.get("K_uic") is not None:
         summary["K_uic"] = cal["K_uic"]
-
-    summary["plane_qs_weighting"] = "ports_equal"  # will flip to 'Aj' when profiles are available
 
     # --- Venturi curve (mass-flow domain) ---
     # Geometry-only curve and an ISO-style curve with configurable C and epsilon
