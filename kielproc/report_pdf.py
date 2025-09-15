@@ -947,10 +947,11 @@ def _fig_flow_reference_with_overlay(outdir: Path) -> plt.Figure | None:
         dp_corr = pd.to_numeric(dd.get("data_DP_mbar_corr", pd.Series([])), errors="coerce").dropna().to_numpy()
         if dp_corr.size == 0 and "data_DP_mbar" in dd.columns:
             dp_corr = pd.to_numeric(dd["data_DP_mbar"], errors="coerce").dropna().to_numpy()
+        # overlay scatter (RAW is the primary truth; corrected shown faint for reference)
         if dp_raw.size:
-            ax.scatter(dp_raw, _uic(dp_raw), s=6, alpha=0.25, marker="o", label="Overlay (raw)")
+            ax.scatter(dp_raw, _uic(dp_raw), s=9, alpha=0.85, marker="o", label="overlay (raw)")
         if dp_corr.size:
-            ax.scatter(dp_corr, _uic(dp_corr), s=9, alpha=0.85, marker=".", label="Overlay (corrected)")
+            ax.scatter(dp_corr, _uic(dp_corr), s=6, alpha=0.30, marker=".", label="overlay (regressed)")
 
     rec = (s_all or {}).get("reconcile", {}) or {}
     dp_geom = rec.get("dp_pred_geom_mbar", None)
@@ -967,7 +968,7 @@ def _fig_flow_reference_with_overlay(outdir: Path) -> plt.Figure | None:
     if isinstance(dp_corr, (int, float)) and (dp_corr != dp_geom):
         ax.axvline(dp_corr, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Pred Δp (reconciled) {dp_corr:.3g} mbar")
     ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
-    ax.set_title("Flow lookup: reference (constant) with data overlay and predicted band")
+    ax.set_title("Flow lookup: reference (constant) with data overlay (raw shown bold)")
     ax.set_axisbelow(True); ax.grid(True, alpha=0.35)
     _shade_recommended_band(ax, outdir, s_all, label_prefix="Recommended")
     handles, labels = ax.get_legend_handles_labels()
@@ -1020,10 +1021,11 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
             return np.full_like(np.asarray(dp, float), np.nan)
         return float(K) * np.sqrt(np.clip(np.asarray(dp, float), 0.0, None))
 
+    # overlay scatter (RAW is the primary truth; corrected shown faint for reference)
     if dp_raw.size:
-        ax.scatter(dp_raw, _uic(dp_raw), s=20, alpha=0.25, marker="o", label="Overlay (raw)", zorder=5)
+        ax.scatter(dp_raw, _uic(dp_raw), s=20, alpha=0.85, marker="o", label="overlay (raw)", zorder=5)
     if dp_corr.size:
-        ax.scatter(dp_corr, _uic(dp_corr), s=20, alpha=0.85, marker=".", label="Overlay (corrected)", zorder=5)
+        ax.scatter(dp_corr, _uic(dp_corr), s=20, alpha=0.30, marker=".", label="overlay (regressed)", zorder=5)
 
     ax.set_xlim(lo, hi)
     ax.set_xlabel("DP (mbar)"); ax.set_ylabel("Flow (t/h)")
@@ -1050,7 +1052,7 @@ def _fig_flow_reference_zoom(outdir: Path) -> plt.Figure | None:
         ax.axvline(dp_geom, linestyle=":", linewidth=1.1, alpha=0.9, label=f"Pred Δp (geom) {dp_geom:.3g} mbar")
     if isinstance(dp_corr_pred, (int, float)) and (dp_corr_pred != dp_geom):
         ax.axvline(dp_corr_pred, linestyle="--", linewidth=1.1, alpha=0.9, label=f"Pred Δp (reconciled) {dp_corr_pred:.3g} mbar")
-    ax.set_title(title + " + predicted band"); ax.set_axisbelow(True); ax.grid(True, alpha=0.35)
+    ax.set_title(title + " + predicted band (raw shown bold)"); ax.set_axisbelow(True); ax.grid(True, alpha=0.35)
     _shade_recommended_band(ax, outdir, s_all, label_prefix="Recommended")
     handles, labels = ax.get_legend_handles_labels()
     if labels:
