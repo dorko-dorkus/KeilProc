@@ -65,17 +65,17 @@ def _overlay_dp_series(comb: Optional[pd.DataFrame], data: Optional[pd.DataFrame
     """Extract overlay DP vector robustly from either combined or data table.
 
     Prefers corrected DP (``*_corr``) if present, otherwise falls back to
-    legacy column names.
+    other known column names (e.g. raw or legacy fields).
     """
     if comb is not None:
         # Side-by-side shape with explicit data_ prefix
-        for col in ["data_DP_mbar_corr", "data_DP_mbar"]:
+        for col in ["data_DP_mbar_corr", "data_DP_mbar", "data_DP_mbar_raw"]:
             if col in comb.columns:
                 s = pd.to_numeric(comb[col], errors="coerce").dropna()
                 if s.size > 0:
                     return s
         # Vertical union shape
-        for col in ["DP_mbar_corr", "DP_mbar"]:
+        for col in ["DP_mbar_corr", "DP_mbar", "DP_mbar_raw"]:
             if col in comb.columns:
                 df = comb
                 if "source" in df.columns:
@@ -86,7 +86,7 @@ def _overlay_dp_series(comb: Optional[pd.DataFrame], data: Optional[pd.DataFrame
                 if s.size > 0:
                     return s
     if data is not None:
-        for col in ["data_DP_mbar_corr", "data_DP_mbar"]:
+        for col in ["data_DP_mbar_corr", "data_DP_mbar", "data_DP_mbar_raw"]:
             if col in data.columns:
                 s = pd.to_numeric(data[col], errors="coerce").dropna()
                 if s.size > 0:
