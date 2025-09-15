@@ -1102,24 +1102,27 @@ def _venturi_page(outdir: Path) -> plt.Figure | None:
 
 
 def _profiles_page(outdir: Path) -> Optional[plt.Figure]:
-    import glob
-    files = sorted(glob.glob(str(Path(outdir) / "profiles" / "P*_profile.csv")))
+    """Compact overview of per-port q_s(ξ) profiles."""
+    prof_dir = Path(outdir) / "profiles"
+    meta = _load_json(prof_dir / "_meta.json") or {}
+    files = sorted(p for p in prof_dir.glob("Port*_profile.csv"))
     if not files:
         return None
-    fig, axes = plt.subplots(2, 4, figsize=(10.5, 6.5), constrained_layout=True)
+    fig, axes = plt.subplots(2, 4, figsize=(11.0, 6.8), constrained_layout=True)
     axes = axes.ravel()
-    for ax, fn in zip(axes, files[:8]):
-        df = pd.read_csv(fn)
-        xi = pd.to_numeric(df.get("xi"), errors="coerce")
-        qs0 = pd.to_numeric(df.get("q_s_median"), errors="coerce")
-        qss = pd.to_numeric(df.get("q_s_smoothed"), errors="coerce")
-        if xi.notna().any() and qs0.notna().any():
-            ax.plot(xi, qs0, linewidth=1.0, label="median q_s(ξ)")
-        if xi.notna().any() and qss.notna().any():
-            ax.plot(xi, qss, linewidth=1.0, linestyle="--", label="smoothed")
-        ax.set_title(Path(fn).stem.replace('_profile',''), fontsize=9)
-        ax.set_xlabel("ξ"); ax.set_ylabel("q_s [Pa]")
-        ax.grid(True, alpha=0.2); ax.legend(fontsize=7)
+    for ax, f in zip(axes, files[:8]):
+        df = pd.read_csv(f)
+        ax.plot(df["xi"], df["q_s_pa_smooth"] / 100.0, label="smoothed q_s", linewidth=1.2)
+        ax.scatter(df["xi"], df["q_s_pa_med"] / 100.0, s=6, alpha=0.35, label="median")
+        ax.fill_between(
+            df["xi"], 0, df["taper"] * df["taper"].max(), alpha=0.08, step="mid", label="edge taper"
+        )
+        ax.set_title(f.stem.replace('_profile', ''))
+        ax.set_xlabel("ξ")
+        ax.set_ylabel("q_s [mbar]")
+        ax.grid(True, alpha=0.25)
+    axes[0].legend(loc="best", frameon=True)
+    fig.suptitle(f"Per-port q_s(ξ) profiles  —  weighting: {meta.get('weighting', '?')}")
     return fig
 
 
@@ -1180,11 +1183,11 @@ def build_run_report_pdf(
         # Flow reference + overlay (zoomed to overlay region)
         f = _fig_flow_reference_zoom(outdir)
         if f: pdf.savefig(f); plt.close()
-        # Venturi curve (optional)
-        f = _venturi_page(outdir)
-        if f: pdf.savefig(f); plt.close()
         # Profiles page (optional)
         f = _profiles_page(outdir)
+        if f: pdf.savefig(f); plt.close()
+        # Venturi curve (optional)
+        f = _venturi_page(outdir)
         if f: pdf.savefig(f); plt.close()
         # Setpoints plot (optional)
         f = _fig_setpoints(outdir)
